@@ -258,3 +258,61 @@ JointCtrl()
   `ConnectPort()` before reading firmware version
 - `ConnectPort()` blocks briefly during `PiperInit` queries
 - `DisconnectPort()` joins the ReadCan thread with a 0.1s timeout
+
+## cpiper: C implementation
+
+`cpiper/` is a pure C implementation of the piper_sdk with zero external
+dependencies (only Linux socketcan). Designed for 500 Hz real-time control.
+
+### Build
+
+```bash
+cd cpiper && mkdir build && cd build
+cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
+```
+
+### Key files
+
+- `cpiper/include/cpiper/` — 9 public headers (start with `cpiper.h`)
+- `cpiper/src/` — 6 implementation files (~4400 lines C)
+- `cpiper/examples/send_zeros.c` — reference example
+- `cpiper/tests/` — protocol (27), CAN (6), interface (18) tests
+
+### Architecture
+
+```
+interface.h  →  protocol.h  →  can.h  →  Linux socketcan
+     ↓
+kinematics.h, param_manager.h, fps.h
+```
+
+- Single-threaded or dual-threaded (your choice)
+- Non-blocking I/O everywhere
+- Thread-safe feedback getters (mutex-protected)
+- `static inline` byte helpers for zero-overhead encode/decode
+
+### Testing
+
+```bash
+cd cpiper/build
+./test_protocol                          # 27 unit tests
+sudo ./test_can                          # 6 CAN tests (needs vcan0)
+sudo ./test_interface                    # 18 interface tests
+../../.venv/bin/python3 ../tests/test_compare.py  # Python SDK comparison
+```
+
+### vcan0 setup
+
+```bash
+sudo modprobe vcan
+sudo ip link add vcan0 type vcan
+sudo ip link set up vcan0
+```
+
+### Documentation
+
+- `cpiper/README.md` — overview and quick start
+- `cpiper/docs/ARCHITECTURE.md` — system design
+- `cpiper/docs/API.md` — full API reference
+- `cpiper/docs/TUTORIAL.md` — step-by-step guides
+- `cpiper/docs/PROTOCOL.md` — CAN protocol details
