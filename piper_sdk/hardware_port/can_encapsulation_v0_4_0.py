@@ -92,6 +92,7 @@ class C_STD_CAN():
         self.rx_message:Optional[Message] = Message()   #创建消息接收类
         self.callback_function = callback_function  #接收回调函数
         self.bus = None
+        self.__bus_check_counter = 0
         if(judge_flag):
             self.JudgeCanInfo()
         if(auto_init):
@@ -170,19 +171,20 @@ class C_STD_CAN():
         return self.channel_name
 
     def ReadCanMessage(self):
-        can_bus_status = self.is_can_bus_ok()
-        if(can_bus_status == self.CAN_STATUS.BUS_STATE_ACTIVE):
-            try:
-                self.rx_message = self.bus.recv(1)
-                if self.rx_message is None:
-                    return self.CAN_STATUS.READ_CAN_MSG_TIMEOUT
-                if self.rx_message and self.callback_function:
-                    self.callback_function(self.rx_message) #回调函数处理接收的原始数据
-                return self.CAN_STATUS.READ_CAN_MSG_OK
-            except Exception as e:
-                return self.CAN_STATUS.READ_CAN_MSG_FAILED
-        else:
-            return can_bus_status
+        self.__bus_check_counter = (self.__bus_check_counter + 1) % 50
+        if self.__bus_check_counter == 0:
+            can_bus_status = self.is_can_bus_ok()
+            if can_bus_status != self.CAN_STATUS.BUS_STATE_ACTIVE:
+                return can_bus_status
+        try:
+            self.rx_message = self.bus.recv(1)
+            if self.rx_message is None:
+                return self.CAN_STATUS.READ_CAN_MSG_TIMEOUT
+            if self.rx_message and self.callback_function:
+                self.callback_function(self.rx_message)
+            return self.CAN_STATUS.READ_CAN_MSG_OK
+        except Exception as e:
+            return self.CAN_STATUS.READ_CAN_MSG_FAILED
 
     def SendCanMessage(self, arbitration_id, data, dlc=8, is_extended_id=False):
         '''can transmit

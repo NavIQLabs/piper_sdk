@@ -535,6 +535,58 @@ class C_PiperInterface_V2():
         self.__feedback_instruction_response_mtx = threading.Lock()
         self.__feedback_instruction_response = self.ArmRespSetInstruction()
 
+        self.__type_handlers = {
+            ArmMsgType.PiperMsgStatusFeedback:        [self.__UpdateArmStatus],
+            ArmMsgType.PiperMsgEndPoseFeedback_1:     [self.__UpdateArmEndPoseState],
+            ArmMsgType.PiperMsgEndPoseFeedback_2:     [self.__UpdateArmEndPoseState],
+            ArmMsgType.PiperMsgEndPoseFeedback_3:     [self.__UpdateArmEndPoseState],
+            ArmMsgType.PiperMsgJointFeedBack_12:      [self.__UpdateArmJointState],
+            ArmMsgType.PiperMsgJointFeedBack_34:      [self.__UpdateArmJointState],
+            ArmMsgType.PiperMsgJointFeedBack_56:      [self.__UpdateArmJointState],
+            ArmMsgType.PiperMsgGripperFeedBack:       [self.__UpdateArmGripperState],
+            ArmMsgType.PiperMsgHighSpdFeed_1:         [self.__UpdateDriverInfoHighSpdFeedback],
+            ArmMsgType.PiperMsgHighSpdFeed_2:         [self.__UpdateDriverInfoHighSpdFeedback],
+            ArmMsgType.PiperMsgHighSpdFeed_3:         [self.__UpdateDriverInfoHighSpdFeedback],
+            ArmMsgType.PiperMsgHighSpdFeed_4:         [self.__UpdateDriverInfoHighSpdFeedback],
+            ArmMsgType.PiperMsgHighSpdFeed_5:         [self.__UpdateDriverInfoHighSpdFeedback],
+            ArmMsgType.PiperMsgHighSpdFeed_6:         [self.__UpdateDriverInfoHighSpdFeedback],
+            ArmMsgType.PiperMsgLowSpdFeed_1:          [self.__UpdateDriverInfoLowSpdFeedback],
+            ArmMsgType.PiperMsgLowSpdFeed_2:          [self.__UpdateDriverInfoLowSpdFeedback],
+            ArmMsgType.PiperMsgLowSpdFeed_3:          [self.__UpdateDriverInfoLowSpdFeedback],
+            ArmMsgType.PiperMsgLowSpdFeed_4:          [self.__UpdateDriverInfoLowSpdFeedback],
+            ArmMsgType.PiperMsgLowSpdFeed_5:          [self.__UpdateDriverInfoLowSpdFeedback],
+            ArmMsgType.PiperMsgLowSpdFeed_6:          [self.__UpdateDriverInfoLowSpdFeedback],
+            ArmMsgType.PiperMsgFeedbackCurrentMotorAngleLimitMaxSpd: [
+                self.__UpdateCurrentMotorAngleLimitMaxVel,
+                self.__UpdateAllCurrentMotorAngleLimitMaxVel,
+            ],
+            ArmMsgType.PiperMsgFeedbackCurrentMotorMaxAccLimit: [
+                self.__UpdateCurrentMotorMaxAccLimit,
+                self.__UpdateAllCurrentMotorMaxAccLimit,
+            ],
+            ArmMsgType.PiperMsgFeedbackCurrentEndVelAccParam: [
+                self.__UpdateCurrentEndVelAndAccParam,
+            ],
+            ArmMsgType.PiperMsgCrashProtectionRatingFeedback: [
+                self.__UpdateCrashProtectionLevelFeedback,
+            ],
+            ArmMsgType.PiperMsgGripperTeachingPendantParamFeedback: [
+                self.__UpdateGripperTeachingPendantParamFeedback,
+            ],
+            ArmMsgType.PiperMsgFeedbackRespSetInstruction: [
+                self.__UpdateRespSetInstruction,
+            ],
+            ArmMsgType.PiperMsgFirmwareRead:           [self.__UpdatePiperFirmware],
+            ArmMsgType.PiperMsgMotionCtrl_2: [
+                self.__UpdateArmCtrlCode151,
+                self.__UpdateArmModeCtrl,
+            ],
+            ArmMsgType.PiperMsgJointCtrl_12:           [self.__UpdateArmJointCtrl],
+            ArmMsgType.PiperMsgJointCtrl_34:           [self.__UpdateArmJointCtrl],
+            ArmMsgType.PiperMsgJointCtrl_56:           [self.__UpdateArmJointCtrl],
+            ArmMsgType.PiperMsgGripperCtrl:            [self.__UpdateArmGripperCtrl],
+        }
+
         self._initialized = True  # 标记已初始化
     
     @classmethod
@@ -631,8 +683,8 @@ class C_PiperInterface_V2():
                 #     continue
                 try:
                     read_status = self.__arm_can.ReadCanMessage()
-                    # if(read_status != self.__arm_can.CAN_STATUS.READ_CAN_MSG_OK):
-                    #     time.sleep(0.00002)
+                    if read_status == self.__arm_can.CAN_STATUS.READ_CAN_MSG_TIMEOUT:
+                        time.sleep(0.001)
                     # if self.__reconnect_after_disconnection:
                     #     if(read_status != self.__arm_can.CAN_STATUS.READ_CAN_MSG_OK):
                     #         try:
@@ -700,19 +752,22 @@ class C_PiperInterface_V2():
                 return
             self.__connected = False
             self.__read_can_stop_event.set()
+            self.__can_monitor_stop_event.set()
 
-        if hasattr(self, 'can_deal_th') and self.__can_deal_th.is_alive():
-            self.__can_deal_th.join(timeout=thread_timeout)  # 加入超时，避免无限阻塞
+        if self.__can_deal_th and self.__can_deal_th.is_alive():
+            self.__can_deal_th.join(timeout=thread_timeout)
             if self.__can_deal_th.is_alive():
                 self.logger.warning("[DisconnectPort] The [ReadCan] thread failed to exit within the timeout period")
 
-        # if hasattr(self, 'can_monitor_th') and self.__can_monitor_th.is_alive():
-        #     self.__can_monitor_th.join(timeout=thread_timeout)
-        #     if self.__can_monitor_th.is_alive():
-        #         self.logger.warning("The CanMonitor thread failed to exit within the timeout period")
+        if self.__can_monitor_th and self.__can_monitor_th.is_alive():
+            self.__can_monitor_th.join(timeout=thread_timeout)
+            if self.__can_monitor_th.is_alive():
+                self.logger.warning("[DisconnectPort] CanMonitor thread failed to exit within the timeout period")
+
+        self.__fps_counter.stop()
 
         try:
-            self.__arm_can.Close()  # 关闭 CAN 端口
+            self.__arm_can.Close()
             self.logger.info("[DisconnectPort] CAN port is closed")
         except Exception as e:
             self.logger.error("[DisconnectPort] 'An exception occurred while closing the CAN port: %s'", e)
@@ -802,27 +857,10 @@ class C_PiperInterface_V2():
         receive_flag = self.__parser.DecodeMessage(rx_message, msg)
         if(receive_flag):
             self.__fps_counter.increment("CanMonitor")
-            self.__UpdateArmStatus(msg)
-            self.__UpdateArmEndPoseState(msg)
-            self.__UpdateArmJointState(msg)
-            self.__UpdateArmGripperState(msg)
-            self.__UpdateDriverInfoHighSpdFeedback(msg)
-            self.__UpdateDriverInfoLowSpdFeedback(msg)
-
-            self.__UpdateCurrentEndVelAndAccParam(msg)
-            self.__UpdateCrashProtectionLevelFeedback(msg)
-            self.__UpdateGripperTeachingPendantParamFeedback(msg)
-            self.__UpdateCurrentMotorAngleLimitMaxVel(msg)
-            self.__UpdateCurrentMotorMaxAccLimit(msg)
-            self.__UpdateAllCurrentMotorAngleLimitMaxVel(msg)
-            self.__UpdateAllCurrentMotorMaxAccLimit(msg)
-            # 更新主臂发送消息
-            self.__UpdateArmJointCtrl(msg)
-            self.__UpdateArmGripperCtrl(msg)
-            self.__UpdateArmCtrlCode151(msg)
-            self.__UpdateArmModeCtrl(msg)
-            self.__UpdatePiperFirmware(msg)
-            self.__UpdateRespSetInstruction(msg)
+            handlers = self.__type_handlers.get(msg.type_)
+            if handlers:
+                for handler in handlers:
+                    handler(msg)
             if self.__start_sdk_fk_cal:
                 self.__UpdatePiperFeedbackFK()
                 self.__UpdatePiperCtrlFK()
@@ -1814,7 +1852,7 @@ class C_PiperInterface_V2():
                         return
                 self.__fps_counter.increment("ArmGripper")
                 self.__arm_gripper_msgs.time_stamp = msg.time_stamp
-                self.__arm_gripper_msgs.gripper_state.grippers_angle = self.__CalGripperSDKLimit(msg.gripper_feedback.grippers_angle)
+                self.__arm_gripper_msgs.gripper_state.grippers_angle = gripper_val
                 self.__arm_gripper_msgs.gripper_state.grippers_effort = msg.gripper_feedback.grippers_effort
                 self.__arm_gripper_msgs.gripper_state.status_code = msg.gripper_feedback.status_code
             return self.__arm_gripper_msgs

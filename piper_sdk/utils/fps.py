@@ -39,13 +39,13 @@ class C_FPSCounter:
 
     def increment(self, name):
         """ 递增帧计数，并记录时间戳 """
-        current_time = time.perf_counter()
         with self.lock:
             if name in self.fps_data:
                 self.fps_data[name] += 1
-                if(self.start_realtime_fps):
-                    self.time_stamps[name].append(current_time)  # `deque` 自动管理过期数据
-                self.last_time[name] = current_time
+                if self.start_realtime_fps:
+                    current_time = time.perf_counter()
+                    self.time_stamps[name].append(current_time)
+                    self.last_time[name] = current_time
 
     def get_fps(self, name):
         """ 获取 1 秒内的 FPS 计算结果 """
