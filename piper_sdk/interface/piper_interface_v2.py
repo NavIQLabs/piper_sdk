@@ -355,6 +355,7 @@ class C_PiperInterface_V2():
                 start_sdk_joint_limit: bool = False,
                 start_sdk_gripper_limit: bool = False,
                 enable_performance_metrics: bool = True,
+                minimal_feedback_mode: bool = False,
                 logger_level:LogLevel = LogLevel.WARNING,
                 log_to_file:bool = False,
                 log_file_path = None):
@@ -380,6 +381,7 @@ class C_PiperInterface_V2():
                 start_sdk_joint_limit: bool = False, 
                 start_sdk_gripper_limit: bool = False,
                 enable_performance_metrics: bool = True,
+                minimal_feedback_mode: bool = False,
                 logger_level:LogLevel = LogLevel.WARNING,
                 log_to_file:bool = False,
                 log_file_path = None) -> None:
@@ -405,6 +407,7 @@ class C_PiperInterface_V2():
         self.logger.info("%s = %s", "start_sdk_joint_limit", start_sdk_joint_limit)
         self.logger.info("%s = %s", "start_sdk_gripper_limit", start_sdk_gripper_limit)
         self.logger.info("%s = %s", "enable_performance_metrics", enable_performance_metrics)
+        self.logger.info("%s = %s", "minimal_feedback_mode", minimal_feedback_mode)
         self.logger.info("%s = %s", "logger_level", logger_level)
         self.logger.info("%s = %s", "log_to_file", log_to_file)
         self.logger.info("%s = %s", "log_file_path", LogManager.get_log_file_path(global_area))
@@ -445,6 +448,7 @@ class C_PiperInterface_V2():
         # FPS cal
         self.__fps_counter = C_FPSCounter(enabled=enable_performance_metrics)
         self.__enable_performance_metrics = enable_performance_metrics
+        self.__minimal_feedback_mode = minimal_feedback_mode
         self.__fps_counter.set_cal_fps_time_interval(0.1)
         self.__fps_counter.add_variable("CanMonitor")
         self.__q_can_fps = Queue(maxsize=5)
@@ -500,6 +504,16 @@ class C_PiperInterface_V2():
 
         self.__arm_motor_info_high_spd_mtx = threading.Lock()
         self.__arm_motor_info_high_spd = self.ArmMotorDriverInfoHighSpd()
+        self.__arm_state_snapshot_mtx = threading.Lock()
+        self.__arm_state_snapshot = {
+            "joint_deg": [0] * 6,
+            "joint_velocity": [0] * 6,
+            "joint_effort": [0.0] * 6,
+            "gripper_angle": 0,
+            "gripper_effort": 0,
+            "driver_enable": [False] * 6,
+            "time_stamp": 0.0,
+        }
 
         self.__arm_motor_info_low_spd_mtx = threading.Lock()
         self.__arm_motor_info_low_spd = self.ArmMotorDriverInfoLowSpd()
@@ -865,6 +879,9 @@ class C_PiperInterface_V2():
         receive_flag = self.__parser.DecodeMessage(rx_message, msg)
         if(receive_flag):
             self.__fps_counter.increment("CanMonitor")
+            if self.__minimal_feedback_mode:
+                self.__UpdateMinimalArmState(msg)
+                return
             handlers = self.__type_handlers.get(msg.type_)
             if handlers:
                 for handler in handlers:
@@ -872,6 +889,73 @@ class C_PiperInterface_V2():
             if self.__start_sdk_fk_cal:
                 self.__UpdatePiperFeedbackFK()
                 self.__UpdatePiperCtrlFK()
+
+    def __UpdateMinimalArmState(self, msg:PiperMessage):
+        with self.__arm_state_snapshot_mtx:
+            snapshot = self.__arm_state_snapshot
+            msg_type = msg.type_
+
+            if(msg_type == ArmMsgType.PiperMsgJointFeedBack_12):
+                joint_1 = self.__CalJointSDKLimit(msg.arm_joint_feedback.joint_1, "j1")
+                joint_2 = self.__CalJointSDKLimit(msg.arm_joint_feedback.joint_2, "j2")
+                if self.isFilterAbnormalData() and (abs(joint_1) > 3000000 or abs(joint_2) > 3000000):
+                    return
+                snapshot["joint_deg"][0] = joint_1
+                snapshot["joint_deg"][1] = joint_2
+            elif(msg_type == ArmMsgType.PiperMsgJointFeedBack_34):
+                joint_3 = self.__CalJointSDKLimit(msg.arm_joint_feedback.joint_3, "j3")
+                joint_4 = self.__CalJointSDKLimit(msg.arm_joint_feedback.joint_4, "j4")
+                if self.isFilterAbnormalData() and (abs(joint_3) > 3000000 or abs(joint_4) > 3000000):
+                    return
+                snapshot["joint_deg"][2] = joint_3
+                snapshot["joint_deg"][3] = joint_4
+            elif(msg_type == ArmMsgType.PiperMsgJointFeedBack_56):
+                joint_5 = self.__CalJointSDKLimit(msg.arm_joint_feedback.joint_5, "j5")
+                joint_6 = self.__CalJointSDKLimit(msg.arm_joint_feedback.joint_6, "j6")
+                if self.isFilterAbnormalData() and (abs(joint_5) > 3000000 or abs(joint_6) > 3000000):
+                    return
+                snapshot["joint_deg"][4] = joint_5
+                snapshot["joint_deg"][5] = joint_6
+            elif(msg_type == ArmMsgType.PiperMsgGripperFeedBack):
+                gripper_val = self.__CalGripperSDKLimit(msg.gripper_feedback.grippers_angle)
+                if self.isFilterAbnormalData() and abs(gripper_val) > 150000:
+                    return
+                snapshot["gripper_angle"] = gripper_val
+                snapshot["gripper_effort"] = msg.gripper_feedback.grippers_effort
+            elif(msg_type == ArmMsgType.PiperMsgHighSpdFeed_1):
+                snapshot["joint_velocity"][0] = msg.arm_high_spd_feedback_1.motor_speed
+                snapshot["joint_effort"][0] = msg.arm_high_spd_feedback_1.cal_effort()
+            elif(msg_type == ArmMsgType.PiperMsgHighSpdFeed_2):
+                snapshot["joint_velocity"][1] = msg.arm_high_spd_feedback_2.motor_speed
+                snapshot["joint_effort"][1] = msg.arm_high_spd_feedback_2.cal_effort()
+            elif(msg_type == ArmMsgType.PiperMsgHighSpdFeed_3):
+                snapshot["joint_velocity"][2] = msg.arm_high_spd_feedback_3.motor_speed
+                snapshot["joint_effort"][2] = msg.arm_high_spd_feedback_3.cal_effort()
+            elif(msg_type == ArmMsgType.PiperMsgHighSpdFeed_4):
+                snapshot["joint_velocity"][3] = msg.arm_high_spd_feedback_4.motor_speed
+                snapshot["joint_effort"][3] = msg.arm_high_spd_feedback_4.cal_effort()
+            elif(msg_type == ArmMsgType.PiperMsgHighSpdFeed_5):
+                snapshot["joint_velocity"][4] = msg.arm_high_spd_feedback_5.motor_speed
+                snapshot["joint_effort"][4] = msg.arm_high_spd_feedback_5.cal_effort()
+            elif(msg_type == ArmMsgType.PiperMsgHighSpdFeed_6):
+                snapshot["joint_velocity"][5] = msg.arm_high_spd_feedback_6.motor_speed
+                snapshot["joint_effort"][5] = msg.arm_high_spd_feedback_6.cal_effort()
+            elif(msg_type == ArmMsgType.PiperMsgLowSpdFeed_1):
+                snapshot["driver_enable"][0] = bool(msg.arm_low_spd_feedback_1.foc_status_code & (1 << 6))
+            elif(msg_type == ArmMsgType.PiperMsgLowSpdFeed_2):
+                snapshot["driver_enable"][1] = bool(msg.arm_low_spd_feedback_2.foc_status_code & (1 << 6))
+            elif(msg_type == ArmMsgType.PiperMsgLowSpdFeed_3):
+                snapshot["driver_enable"][2] = bool(msg.arm_low_spd_feedback_3.foc_status_code & (1 << 6))
+            elif(msg_type == ArmMsgType.PiperMsgLowSpdFeed_4):
+                snapshot["driver_enable"][3] = bool(msg.arm_low_spd_feedback_4.foc_status_code & (1 << 6))
+            elif(msg_type == ArmMsgType.PiperMsgLowSpdFeed_5):
+                snapshot["driver_enable"][4] = bool(msg.arm_low_spd_feedback_5.foc_status_code & (1 << 6))
+            elif(msg_type == ArmMsgType.PiperMsgLowSpdFeed_6):
+                snapshot["driver_enable"][5] = bool(msg.arm_low_spd_feedback_6.foc_status_code & (1 << 6))
+            else:
+                return
+
+            snapshot["time_stamp"] = msg.time_stamp
     
     # def JudgeExsitedArm(self, can_id:int):
     #     '''判断当前can socket是否有指定的机械臂设备,通过can id筛选
@@ -1164,8 +1248,20 @@ class C_PiperInterface_V2():
                 "joint_effort": [0.0] * 6,
                 "gripper_angle": 0,
                 "gripper_effort": 0,
+                "driver_enable": [False] * 6,
                 "time_stamp": 0.0,
             }
+
+        if self.__minimal_feedback_mode:
+            with self.__arm_state_snapshot_mtx:
+                snapshot["joint_deg"][:] = self.__arm_state_snapshot["joint_deg"]
+                snapshot["joint_velocity"][:] = self.__arm_state_snapshot["joint_velocity"]
+                snapshot["joint_effort"][:] = self.__arm_state_snapshot["joint_effort"]
+                snapshot["gripper_angle"] = self.__arm_state_snapshot["gripper_angle"]
+                snapshot["gripper_effort"] = self.__arm_state_snapshot["gripper_effort"]
+                snapshot["driver_enable"][:] = self.__arm_state_snapshot["driver_enable"]
+                snapshot["time_stamp"] = self.__arm_state_snapshot["time_stamp"]
+            return snapshot
 
         joint_deg = snapshot["joint_deg"]
         joint_velocity = snapshot["joint_velocity"]
@@ -1203,6 +1299,14 @@ class C_PiperInterface_V2():
             snapshot["gripper_angle"] = gripper_state.grippers_angle
             snapshot["gripper_effort"] = gripper_state.grippers_effort
             time_stamp = max(time_stamp, self.__arm_gripper_msgs.time_stamp)
+
+        with self.__arm_motor_info_low_spd_mtx:
+            snapshot["driver_enable"][0] = self.__arm_motor_info_low_spd.motor_1.foc_status.driver_enable_status
+            snapshot["driver_enable"][1] = self.__arm_motor_info_low_spd.motor_2.foc_status.driver_enable_status
+            snapshot["driver_enable"][2] = self.__arm_motor_info_low_spd.motor_3.foc_status.driver_enable_status
+            snapshot["driver_enable"][3] = self.__arm_motor_info_low_spd.motor_4.foc_status.driver_enable_status
+            snapshot["driver_enable"][4] = self.__arm_motor_info_low_spd.motor_5.foc_status.driver_enable_status
+            snapshot["driver_enable"][5] = self.__arm_motor_info_low_spd.motor_6.foc_status.driver_enable_status
 
         snapshot["time_stamp"] = time_stamp
         return snapshot
@@ -1304,6 +1408,10 @@ class C_PiperInterface_V2():
         -------
             list : bool
         '''
+        if self.__minimal_feedback_mode:
+            with self.__arm_state_snapshot_mtx:
+                return list(self.__arm_state_snapshot["driver_enable"])
+
         enable_list = []
         enable_list.append(self.GetArmLowSpdInfoMsgs().motor_1.foc_status.driver_enable_status)
         enable_list.append(self.GetArmLowSpdInfoMsgs().motor_2.foc_status.driver_enable_status)
