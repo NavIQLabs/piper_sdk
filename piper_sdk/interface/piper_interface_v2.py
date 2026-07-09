@@ -378,6 +378,7 @@ class C_PiperInterface_V2():
                 dh_is_offset: int = 0x01,
                 start_sdk_joint_limit: bool = False, 
                 start_sdk_gripper_limit: bool = False,
+                enable_performance_metrics: bool = True,
                 logger_level:LogLevel = LogLevel.WARNING,
                 log_to_file:bool = False,
                 log_file_path = None) -> None:
@@ -402,6 +403,7 @@ class C_PiperInterface_V2():
         self.logger.info("%s = %s", "dh_is_offset", dh_is_offset)
         self.logger.info("%s = %s", "start_sdk_joint_limit", start_sdk_joint_limit)
         self.logger.info("%s = %s", "start_sdk_gripper_limit", start_sdk_gripper_limit)
+        self.logger.info("%s = %s", "enable_performance_metrics", enable_performance_metrics)
         self.logger.info("%s = %s", "logger_level", logger_level)
         self.logger.info("%s = %s", "log_to_file", log_to_file)
         self.logger.info("%s = %s", "log_file_path", LogManager.get_log_file_path(global_area))
@@ -440,7 +442,8 @@ class C_PiperInterface_V2():
         self.__can_monitor_th = None
         self.__connected = False  # 连接状态
         # FPS cal
-        self.__fps_counter = C_FPSCounter()
+        self.__fps_counter = C_FPSCounter(enabled=enable_performance_metrics)
+        self.__enable_performance_metrics = enable_performance_metrics
         self.__fps_counter.set_cal_fps_time_interval(0.1)
         self.__fps_counter.add_variable("CanMonitor")
         self.__q_can_fps = Queue(maxsize=5)
@@ -605,6 +608,10 @@ class C_PiperInterface_V2():
             bool: The return value. True for success, False otherwise.
         '''
         return self.__connected
+
+    def SetPerformanceMetricsEnabled(self, enabled: bool):
+        self.__enable_performance_metrics = self.__fps_counter.set_enabled(enabled)
+        return self.__enable_performance_metrics
 
     def CreateCanBus(self, 
                     can_name:str, 
@@ -1131,7 +1138,74 @@ class C_PiperInterface_V2():
                                                                             self.__fps_counter.get_fps('ArmMotorDriverInfoHighSpd_5'),
                                                                             self.__fps_counter.get_fps('ArmMotorDriverInfoHighSpd_6'))
             return self.__arm_motor_info_high_spd
-    
+
+    def GetArmStateSnapshot(self, snapshot=None):
+        '''
+        Copies the latest numeric state into a lightweight snapshot without
+        recomputing FPS metadata or allocating SDK wrapper objects.
+
+        Returns
+        -------
+        dict
+            {
+                "joint_deg": [6 x int],
+                "joint_velocity": [6 x int],
+                "joint_effort": [6 x float],
+                "gripper_angle": int,
+                "gripper_effort": int,
+                "time_stamp": float,
+            }
+        '''
+        if snapshot is None:
+            snapshot = {
+                "joint_deg": [0] * 6,
+                "joint_velocity": [0] * 6,
+                "joint_effort": [0.0] * 6,
+                "gripper_angle": 0,
+                "gripper_effort": 0,
+                "time_stamp": 0.0,
+            }
+
+        joint_deg = snapshot["joint_deg"]
+        joint_velocity = snapshot["joint_velocity"]
+        joint_effort = snapshot["joint_effort"]
+        time_stamp = 0.0
+
+        with self.__arm_joint_msgs_mtx:
+            joint_state = self.__arm_joint_msgs.joint_state
+            joint_deg[0] = joint_state.joint_1
+            joint_deg[1] = joint_state.joint_2
+            joint_deg[2] = joint_state.joint_3
+            joint_deg[3] = joint_state.joint_4
+            joint_deg[4] = joint_state.joint_5
+            joint_deg[5] = joint_state.joint_6
+            time_stamp = max(time_stamp, self.__arm_joint_msgs.time_stamp)
+
+        with self.__arm_motor_info_high_spd_mtx:
+            motor_info = self.__arm_motor_info_high_spd
+            joint_velocity[0] = motor_info.motor_1.motor_speed
+            joint_velocity[1] = motor_info.motor_2.motor_speed
+            joint_velocity[2] = motor_info.motor_3.motor_speed
+            joint_velocity[3] = motor_info.motor_4.motor_speed
+            joint_velocity[4] = motor_info.motor_5.motor_speed
+            joint_velocity[5] = motor_info.motor_6.motor_speed
+            joint_effort[0] = motor_info.motor_1.effort
+            joint_effort[1] = motor_info.motor_2.effort
+            joint_effort[2] = motor_info.motor_3.effort
+            joint_effort[3] = motor_info.motor_4.effort
+            joint_effort[4] = motor_info.motor_5.effort
+            joint_effort[5] = motor_info.motor_6.effort
+            time_stamp = max(time_stamp, motor_info.time_stamp)
+
+        with self.__arm_gripper_msgs_mtx:
+            gripper_state = self.__arm_gripper_msgs.gripper_state
+            snapshot["gripper_angle"] = gripper_state.grippers_angle
+            snapshot["gripper_effort"] = gripper_state.grippers_effort
+            time_stamp = max(time_stamp, self.__arm_gripper_msgs.time_stamp)
+
+        snapshot["time_stamp"] = time_stamp
+        return snapshot
+
     def GetMotorStates(self):
         '''
         Retrieves the robot arm motor status message of the robotic arm.
