@@ -354,6 +354,7 @@ class C_PiperInterface_V2():
                 dh_is_offset: int = 0x01,
                 start_sdk_joint_limit: bool = False,
                 start_sdk_gripper_limit: bool = False,
+                enable_performance_metrics: bool = True,
                 logger_level:LogLevel = LogLevel.WARNING,
                 log_to_file:bool = False,
                 log_file_path = None):
