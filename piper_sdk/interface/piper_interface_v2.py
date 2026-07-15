@@ -553,6 +553,7 @@ class C_PiperInterface_V2():
         self.__feedback_instruction_response_mtx = threading.Lock()
         self.__feedback_instruction_response = self.ArmRespSetInstruction()
 
+        self.__rx_msg = PiperMessage()
         self.__type_handlers = {
             ArmMsgType.PiperMsgStatusFeedback:        [self.__UpdateArmStatus],
             ArmMsgType.PiperMsgEndPoseFeedback_1:     [self.__UpdateArmEndPoseState],
@@ -875,7 +876,7 @@ class C_PiperInterface_V2():
         Args:
             rx_message (Optional[can.Message]): The raw data received via CAN.
         '''
-        msg = PiperMessage()
+        msg = self.__rx_msg
         receive_flag = self.__parser.DecodeMessage(rx_message, msg)
         if(receive_flag):
             self.__fps_counter.increment("CanMonitor")
