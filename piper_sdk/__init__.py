@@ -7,6 +7,7 @@ from .protocol.protocol_v2 import *
 from .interface import *
 from .kinematics.piper_fk import C_PiperForwardKinematics
 from .version import PiperSDKVersion
+from .controller import *
 
 __all__ = [
     'C_PiperParserBase',
