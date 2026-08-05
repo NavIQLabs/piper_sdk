@@ -51,10 +51,13 @@ class BaseController:
     :param vel_limit: per-joint velocity clamp in rad/s (default conservative).
     :param enable_on_start: enter MIT mode automatically in ``enable()``.
     :param disable_motors_on_stop: call ``DisablePiper()`` on ``disable()``.
+    :param torque_rate_limit: max torque change per tick in N·m, scalar for all
+        joints or per-joint sequence (default 0.0 = disabled).
     '''
     def __init__(self, interface, rate_hz=500.0, name="base",
                  model=None, tau_limit=8.0, vel_limit=None,
-                 enable_on_start=True, disable_motors_on_stop=True):
+                 enable_on_start=True, disable_motors_on_stop=True,
+                 torque_rate_limit=0.0):
         self._intf = interface
         self._rate_hz = rate_hz
         self._name = name
@@ -67,6 +70,8 @@ class BaseController:
         self._in_mit = False
         self._safety_ok = True
         self._last_disable = 0.0
+        self._torque_rate_limit = torque_rate_limit
+        self._tau_prev = [0.0] * 6
 
         self._loop = RtLoop(rate_hz=rate_hz, callback=self._on_tick, name=name,
                             max_step_s=0.05, max_late_s=0.5,
@@ -111,6 +116,7 @@ class BaseController:
         if self._enabled:
             return
         self._safety_ok = True
+        self._tau_prev = [0.0] * 6
         if not self._intf.get_connect_status():
             self._intf.ConnectPort()
         if self._enable_on_start:
@@ -162,7 +168,15 @@ class BaseController:
         vel_ref = clip(vel_ref, VEL_MIN, VEL_MAX)
         kp = clip(kp, KP_MIN, KP_MAX)
         kd = clip(kd, KD_MIN, KD_MAX)
+        rate = self._torque_rate_limit
+        idx = motor_num - 1
+        if isinstance(rate, (list, tuple)):
+            rate = rate[idx] if idx < len(rate) else 0.0
+        if rate > 0.0:
+            t_ref = self._tau_prev[idx] + clip(
+                t_ref - self._tau_prev[idx], -rate, rate)
         t_ref = clip(t_ref, -self._tau_limit, self._tau_limit)
+        self._tau_prev[idx] = t_ref
         self._intf.JointMitCtrl(motor_num, pos_ref, vel_ref, kp, kd, t_ref)
 
     def _clamp_joint_velocity(self, qd_des):

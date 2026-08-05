@@ -173,6 +173,31 @@ def clip(v, lo, hi):
         return hi
     return v
 
+def saturate_torque_rate(tau_desired, tau_prev, delta_tau_max):
+    '''
+    Clamp the per-cycle torque-rate limit (rate limiting).
+
+    ``tau_out = tau_prev + clip(tau_desired - tau_prev, -d, +d)``
+
+    :param tau_desired: commanded torque vector.
+    :param tau_prev: torque vector sent on the previous cycle.
+    :param delta_tau_max: max allowed change per cycle, either a scalar applied
+        to every joint or a per-joint sequence of the same length.
+    :return: rate-limited torque vector.
+    :raises ValueError: if ``delta_tau_max`` is per-joint and shorter than
+        ``tau_desired``.
+    '''
+    out = []
+    per_joint = isinstance(delta_tau_max, (list, tuple))
+    if per_joint and len(delta_tau_max) < len(tau_desired):
+        raise ValueError(
+            "per-joint delta_tau_max length %d < tau_desired length %d"
+            % (len(delta_tau_max), len(tau_desired)))
+    for i, t in enumerate(tau_desired):
+        d = delta_tau_max[i] if per_joint else delta_tau_max
+        out.append(tau_prev[i] + clip(t - tau_prev[i], -d, d))
+    return out
+
 def svd_extreme(A, m, l, max_iter=200, tol=1e-12):
     '''
     Approximate largest and smallest singular values of an m x l matrix via
