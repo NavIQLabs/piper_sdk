@@ -42,10 +42,12 @@ from .mathx import (
     clip_vec,
     svd_extreme,
     condition_number,
+    saturate_torque_rate,
 )
 from .model import (
     ArmModel,
     FourierGravityModel,
+    SigmoidFrictionModel,
     FirstOrderLPF,
     DEFAULT_JOINT_LIMITS,
     DEFAULT_VELOCITY_LIMITS,
@@ -66,6 +68,7 @@ __all__ = [
     'ArmState',
     'ArmModel',
     'FourierGravityModel',
+    'SigmoidFrictionModel',
     'FirstOrderLPF',
     'fit_fourier_gravity',
     'save_gravity_model',
@@ -84,4 +87,5 @@ __all__ = [
     'condition_number',
     'clip',
     'clip_vec',
+    'saturate_torque_rate',
 ]
