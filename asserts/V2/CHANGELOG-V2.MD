@@ -149,8 +149,9 @@ Byte 5 安装位置设定
 
 将V2版本单独分出维护，虽然有一些重复代码，但是保证了版本之间的独立性，使用上并无太多差异
 
-其中V2版本在V1基础上增加了函数，如下：
+> 0.6.2: 发送与接收使用独立的CAN bus（Linux），Windows/macOS共享bus；`C_PiperInterface_V2`复用`rx_msg`/`tx_msg`消息对象实例
 
+其中V2版本在V1基础上增加了函数，如下：
 | 函数   | 类型 |说明                                                         |使用                | 参数                        |反馈       |
 | ----- | ---- |------------------------------------------------------------ |-------------------|--------------------------- |--------|
 |`GetGripperTeachingPendantParamFeedback`|Getter Method|获取夹爪/示教器参数反馈指令，包括示教器行程系数反馈、夹爪/示教器最大控制行程限制值反馈 为主动发送指令后反馈消息|obj.GetGripperTeachingPendantParamFeedback()|None|self.__feedback_gripper_teaching_pendant_param|

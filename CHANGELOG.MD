@@ -3,6 +3,41 @@
 [Click to switch ZH](CHANGELOG(ZH).MD)
 =============
 
+Version 0.6.2
+=============
+
+Features
+--------
+
+- ✨ feat(can_comm): Separates the send and receive CAN buses to reduce delays or send failures caused by resource contention
+- ✨ feat(piper_interface_v2): Adds receive and transmit message object instances
+  - Reuses `rx_msg` and `tx_msg` in the interface to avoid repeatedly creating message objects in receive and transmit paths
+- ✨ feat(piper_interface_v2): Adds type-based handler dispatch in the CAN hot path
+  - Only the update handler(s) matching the received frame type are invoked, instead of all handlers unconditionally
+- ✨ feat(piper_interface_v2): Adds `minimal_feedback_mode` and `GetArmStateSnapshot()`
+  - Lightweight state read path that avoids allocating SDK wrapper objects per poll
+- ✨ feat(utils): Adds an `enabled` flag to the FPS counter (`SetPerformanceMetricsEnabled`)
+
+Bug Fixes
+---------
+
+- 🐞 fix(hardware_port): Creates CAN buses according to the current platform
+  - Windows and macOS share the receive/transmit bus, while Linux uses separate receive and transmit buses
+  - Avoids shutting down the same bus instance more than once when closing the CAN bus
+  - Disables receiving own messages and local loopback when creating a bus
+- 🐞 fix(hardware_port): Throttles the CAN bus state check to every 50th read instead of every read
+- 🐞 fix(interface): Stops the CanMonitor and FPS threads on disconnect (thread leak fix)
+- 🐞 fix(interface): Avoids calling `__CalGripperSDKLimit` twice per gripper frame
+- 🐞 fix(utils): Restarts the FPS calculation thread when performance metrics are re-enabled
+- 🐞 fix(utils): Registers FPS variables even while the counter is disabled
+  - Previously variables added while disabled were dropped, so re-enabling tracked nothing; now re-enabling resumes tracking of all registered variables
+
+Miscellaneous
+---------
+
+- 🔧 build(setup.py): Updates the version to `0.6.2`
+- 🔧 perf: Yields 1ms in the read loop on CAN receive timeout
+
 Version 0.6.1
 =============
 

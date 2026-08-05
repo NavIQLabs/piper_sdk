@@ -125,6 +125,8 @@ pip3 install piper_sdk-X.X.X-py3-none-any.whl
 
 注意此处的can模块仅支持机械臂自带的can模块，不支持其它can模块
 
+> 0.6.2起，Linux下SDK使用两个独立的CAN总线句柄（一个接收、一个发送），避免资源争用导致的延迟/发送失败；Windows和macOS共享单个总线句柄。
+
 安装can工具
 
 ```shell

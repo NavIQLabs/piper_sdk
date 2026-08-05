@@ -3,6 +3,40 @@
 [Click to switch EN](CHANGELOG.MD)
 =============
 
+Version 0.6.2
+=============
+
+特性
+--------
+
+- ✨ feat(can_comm): 将发送和接收的bus分开，防止资源抢占导致的延时或者发送失败
+- ✨ feat(piper_interface_v2): 添加接收和发送消息对象实例
+  - 在接收和发送路径中复用`rx_msg`和`tx_msg`，避免重复创建消息对象
+- ✨ feat(piper_interface_v2): CAN热路径中按消息类型分发到对应更新处理函数
+  - 只调用与当前帧类型匹配的更新处理函数，不再无条件调用全部处理函数
+- ✨ feat(piper_interface_v2): 新增`minimal_feedback_mode`与`GetArmStateSnapshot()`
+  - 轻量级状态读取路径，避免每次轮询都分配SDK包装对象
+- ✨ feat(utils): FPS计数器新增`enabled`开关（`SetPerformanceMetricsEnabled`）
+
+Bug修复
+--------
+- 🐞 fix(hardware_port): 根据平台创建bus
+  - Windows和macOS共享收发bus，Linux使用独立的发送和接收bus
+  - 关闭CAN bus时避免重复关闭同一个bus实例
+  - 创建bus时禁止接收自身消息与本地回环
+- 🐞 fix(hardware_port): CAN bus状态检查改为每50次读取检查一次
+- 🐞 fix(interface): 断开连接时停止CanMonitor与FPS线程（线程泄漏修复）
+- 🐞 fix(interface): 每个夹爪帧不再重复调用`__CalGripperSDKLimit`两次
+- 🐞 fix(utils): 重新启用性能指标时重启FPS计算线程
+- 🐞 fix(utils): 计数器禁用期间也注册FPS变量
+  - 此前禁用期间添加的变量会被丢弃，重新启用后追踪不到任何数据；现在重新启用后所有已注册变量恢复正常追踪
+
+其它
+--------
+
+- 🔧 build(setup.py): 更新版本号至`0.6.2`
+- 🔧 perf: 读取CAN消息超时时，读循环让出1ms
+
 Version 0.6.1
 =============
 

@@ -129,6 +129,8 @@ pip3 install piper_sdk-X.X.X-py3-none-any.whl
 
 Note: The CAN module here only supports the robot arm's built-in CAN module, and does not support other CAN modules.
 
+Note: Since 0.6.2, on Linux the SDK uses two independent CAN bus handles (one for receiving, one for transmitting) to avoid delays/send failures from resource contention. Windows and macOS share a single bus handle.
+
 Install CAN tools
 
 ```bash

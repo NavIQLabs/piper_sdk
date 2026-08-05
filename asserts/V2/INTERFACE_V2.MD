@@ -57,6 +57,8 @@ Args:
 - expected_bitrate: The expected bitrate for the CAN bus.
 - judge_flag: Whether to check the CAN port during the instantiation of the class. In some cases, it should be set to False.
 
+Note (0.6.2): On Linux the SDK opens two independent CAN bus handles for receiving and transmitting to avoid resource contention; on Windows/macOS a single shared bus handle is used. Bus creation disables `receive_own_messages` and `local_loopback`.
+
 #### get_connect_status
 
 ```python
@@ -716,6 +718,41 @@ Returns
 ```
 
 Feedback the enable status of the six motors, return a list of length 6, variable type is bool, when True, it means the specified motor is enabled.
+
+When the interface is constructed with `minimal_feedback_mode=True`, this method reads the cached `driver_enable` snapshot instead of the SDK wrapper objects.
+
+#### GetArmStateSnapshot
+
+```python
+def GetArmStateSnapshot(snapshot=None):
+'''
+Copies the latest numeric state into a lightweight snapshot without
+recomputing FPS metadata or allocating SDK wrapper objects.
+
+Returns
+-------
+dict
+  {
+    "joint_deg": [6 x int],
+    "joint_velocity": [6 x int],
+    "joint_effort": [6 x float],
+    "gripper_angle": int,
+    "gripper_effort": int,
+    "driver_enable": [6 x bool],
+    "time_stamp": float,
+  }
+'''
+```
+
+Returns a lightweight state snapshot. In `minimal_feedback_mode=True` it reads the internal `__arm_state_snapshot` updated by the read thread; otherwise it copies from the SDK wrapper objects under their respective locks. Pass a pre-allocated `snapshot` dict to reuse memory in a hot loop.
+
+#### SetPerformanceMetricsEnabled
+
+```python
+def SetPerformanceMetricsEnabled(enabled: bool)
+```
+
+Enables or disables the FPS counter. Disabling skips per-frame `perf_counter()` and FPS computation in the hot path; re-enabling restarts the FPS calculation thread. Returns the resulting enabled state.
 
 #### GetCurrentMotorAngleLimitMaxVel
 
