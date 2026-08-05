@@ -403,3 +403,122 @@ def test_reenable_after_disable():
     assert len(intf._mit_cmds) > n1
     assert ctrl.enabled
     ctrl.disable()
+
+
+def test_joint_limit_repulsion_pushes_away():
+    # Near a limit, an additional torque pushes the joint inward (positive
+    # near the lower limit, negative near the upper). Joint 2 limits are
+    # (0.0, 3.14).
+    def run(q, limit_repulsion_torque):
+        intf = MockInterface(q=q)
+        ctrl = JointTorqueController(intf, gravity_comp=False,
+                                     limit_repulsion_torque=limit_repulsion_torque)
+        ctrl.set_torque([0.0] * 6)
+        _run_ticks(ctrl, n=1)
+        return sorted(intf._mit_cmds, key=lambda c: c[0])[1][5]  # joint 2
+
+    # near lower limit -> positive repulsion
+    assert run([0.2, 0.02, -0.3, 0.0, 0.0, 0.0], 5.0) == pytest.approx(4.0)
+    # near upper limit -> negative repulsion
+    assert run([0.2, 3.10, -0.3, 0.0, 0.0, 0.0], 5.0) == pytest.approx(-3.0)
+    # far from any limit -> no repulsion
+    assert run([0.2, 1.5, -0.3, 0.0, 0.0, 0.0], 5.0) == pytest.approx(0.0)
+    # disabled -> passthrough regardless of proximity
+    assert run([0.2, 0.02, -0.3, 0.0, 0.0, 0.0], 0.0) == pytest.approx(0.0)
+
+
+def test_joint_limit_repulsion_is_rate_limited():
+    # Repulsion must be summed into the torque BEFORE rate limiting (matching
+    # crisp), so it ramps at the rate limit instead of jumping instantly.
+    intf = MockInterface(q=[0.2, 0.0, -0.3, 0.0, 0.0, 0.0])  # joint 2 at limit
+    ctrl = JointTorqueController(intf, gravity_comp=False,
+                                 torque_rate_limit=0.5,
+                                 limit_repulsion_torque=5.0,
+                                 limit_repulsion_range=0.1)
+    ctrl.set_torque([0.0] * 6)
+    _run_ticks(ctrl, n=1)
+    cmds = sorted(intf._mit_cmds, key=lambda c: c[0])
+    # full repulsion would be 5.0 N·m, but the rate limit caps the first tick
+    assert cmds[1][5] == pytest.approx(0.5)
+    for _ in range(10):
+        _run_ticks(ctrl, n=1)
+    cmds = sorted(intf._mit_cmds[-6:], key=lambda c: c[0])
+    # ramped up toward the full repulsion torque
+    assert cmds[1][5] > 2.0
+
+
+def test_error_clip_bounds_large_step():
+    # A big set_target step creates a large error -> torque spike. With
+    # error_clip set, the torque must be strictly bounded.
+    def run(error_clip):
+        intf = MockInterface(q=[0.2, 1.0, -0.3, 0.1, 0.2, 0.0])
+        ctrl = CartesianImpedanceController(intf, gravity_comp=False,
+                                            joint_damping=0.0,
+                                            error_clip=error_clip)
+        x = intf.GetFK("feedback")[5]
+        x_d = [x[0] / 1000.0 + 0.3, x[1] / 1000.0, x[2] / 1000.0,
+               math.radians(x[3]), math.radians(x[4]), math.radians(x[5])]
+        ctrl.set_target(x_d)
+        _run_ticks(ctrl, n=1)
+        return [c[5] for c in intf._mit_cmds]
+
+    tau_unclipped = run(None)
+    tau_clipped = run([0.01] * 6)
+    # clipping caps the per-axis error at 0.01 -> strictly smaller max torque
+    assert max(abs(t) for t in tau_clipped) < max(abs(t) for t in tau_unclipped)
+
+
+def test_error_clip_requires_length_6():
+    intf = MockInterface()
+    with pytest.raises(ValueError):
+        CartesianImpedanceController(intf, error_clip=[0.1] * 3)
+    ctrl = CartesianImpedanceController(intf)
+    with pytest.raises(ValueError):
+        ctrl.set_error_clip([0.1] * 5)
+
+
+def test_output_torque_filter_ema_smooths_steps():
+    # output_torque_filter=0.5 moves the commanded torque half-way to the
+    # target each tick (exponential approach), never jumping the full step.
+    intf = MockInterface()
+    ctrl = JointTorqueController(intf, gravity_comp=False,
+                                 output_torque_filter=0.5)
+    ctrl.set_torque([8.0, 0, 0, 0, 0, 0])
+    _run_ticks(ctrl, n=1)
+    # first command: 0 + 0.5 * 8
+    cmds = sorted(intf._mit_cmds, key=lambda c: c[0])
+    assert cmds[0][5] == pytest.approx(4.0)
+    for _ in range(3):
+        _run_ticks(ctrl, n=1)
+    # last tick's joint 1 = 8*(1 - 0.5^4)
+    last = sorted(intf._mit_cmds[-6:], key=lambda c: c[0])
+    assert last[0][5] == pytest.approx(8.0 * (1 - 0.5 ** 4), abs=1e-6)
+
+
+def test_output_torque_filter_off_passes_through():
+    intf = MockInterface()
+    ctrl = JointTorqueController(intf, gravity_comp=False, output_torque_filter=0.0)
+    ctrl.set_torque([3.0, 0, 0, 0, 0, 0])
+    _run_ticks(ctrl, n=1)
+    assert intf._mit_cmds[0][5] == pytest.approx(3.0)
+
+
+def test_cartesian_impedance_slerp_keeps_unit_quaternion():
+    # The orientation filter slerps on SO(3): the filtered quaternion stays
+    # unit-norm and the rotation converges to the target without drift.
+    intf = MockInterface(q=[0.2, 1.0, -0.3, 0.1, 0.2, 0.0])
+    ctrl = CartesianImpedanceController(intf, gravity_comp=False,
+                                        joint_damping=0.0, target_filter=0.2)
+    x = intf.GetFK("feedback")[5]
+    x_d = [x[0] / 1000.0, x[1] / 1000.0, x[2] / 1000.0,
+           0.0, 0.0, math.pi / 2]
+    ctrl.set_target(x_d)
+    _run_ticks(ctrl, n=1)
+    q = ctrl._q_d_filtered
+    n = math.sqrt(sum(v * v for v in q))
+    assert n == pytest.approx(1.0, abs=1e-6)
+    assert all(math.isfinite(v) for v in q)
+    for _ in range(500):
+        _run_ticks(ctrl, n=1)
+    # converged to the target yaw
+    assert ctrl._x_d_filtered[5] == pytest.approx(math.pi / 2, abs=1e-2)

@@ -71,6 +71,21 @@ def test_is_within_limits():
     assert not m.is_within_limits([0.0, 4.0, 0.0, 0.0, 0.0, 0.0])
 
 
+def test_joint_limit_torque_ramps_toward_limits():
+    # Joint 2 limits (0.0, 3.14); torque rises linearly inside safe_range and
+    # pushes inward: + near lower, - near upper, 0 far away.
+    m = ArmModel()
+    t = m.joint_limit_torque([0.0, 0.05, 0.0, 0.0, 0.0, 0.0], safe_range=0.1, max_torque=5.0)
+    assert t[1] == pytest.approx(5.0 * 0.5)  # halfway inside the ramp
+    t = m.joint_limit_torque([0.0, 3.09, 0.0, 0.0, 0.0, 0.0], safe_range=0.1, max_torque=5.0)
+    assert t[1] == pytest.approx(-5.0 * 0.5)
+    t = m.joint_limit_torque([0.0, 1.5, 0.0, 0.0, 0.0, 0.0], safe_range=0.1, max_torque=5.0)
+    assert t[1] == pytest.approx(0.0)
+    # at the limit -> full max_torque
+    t = m.joint_limit_torque([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], safe_range=0.1, max_torque=5.0)
+    assert t[1] == pytest.approx(5.0)
+
+
 def test_fourier_gravity_zeros_when_unfitted():
     m = FourierGravityModel(order=1)
     assert m.gravity(Q_ZERO) == [0.0] * 6
