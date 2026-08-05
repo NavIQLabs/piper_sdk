@@ -5,8 +5,10 @@ from collections import deque
 
 class C_FPSCounter:
     def __init__(self,
-                 start_realtime_fps:bool = False):
+                 start_realtime_fps:bool = False,
+                 enabled:bool = True):
         """ 初始化 FPS 统计器 """
+        self.enabled = enabled
         self.start_realtime_fps = start_realtime_fps
         self.fps_data = defaultdict(int)  # 记录帧计数
         self.fps_results = defaultdict(float)  # 计算出的 FPS 结果
@@ -23,6 +25,17 @@ class C_FPSCounter:
     def set_cal_fps_time_interval(self, interval:float=0.1):
         self.__interval = interval
         return self.__interval
+
+    def set_enabled(self, enabled: bool):
+        if self.enabled == enabled:
+            return self.enabled
+        if enabled:
+            self.enabled = True
+            self.start()
+        else:
+            self.stop()
+            self.enabled = False
+        return self.enabled
     
     def get_cal_fps_time_interval(self):
         return self.__interval
@@ -39,22 +52,28 @@ class C_FPSCounter:
 
     def increment(self, name):
         """ 递增帧计数，并记录时间戳 """
-        current_time = time.perf_counter()
+        if not self.enabled:
+            return
         with self.lock:
             if name in self.fps_data:
                 self.fps_data[name] += 1
-                if(self.start_realtime_fps):
+                if self.start_realtime_fps:
+                    current_time = time.perf_counter()
                     self.time_stamps[name].append(current_time)  # `deque` 自动管理过期数据
-                self.last_time[name] = current_time
+                    self.last_time[name] = current_time
 
     def get_fps(self, name):
         """ 获取 1 秒内的 FPS 计算结果 """
+        if not self.enabled:
+            return 0.0
         multiple = 1 / self.__interval
         with self.lock:
             return self.fps_results.get(name, 0.0) * multiple
 
     def get_real_time_fps(self, name, window=1.0):
         """ 计算过去 window 秒的实时 FPS """
+        if not self.enabled:
+            return 0.0
         now = time.perf_counter()
         with self.lock:
             if(self.start_realtime_fps):
@@ -66,6 +85,8 @@ class C_FPSCounter:
 
     def start(self):
         """ 启动 FPS 计算线程，防止重复启动 """
+        if not self.enabled:
+            return
         with self.lock:
             if self.running:
                 return  # 已经在运行，避免重复启动
@@ -77,6 +98,8 @@ class C_FPSCounter:
 
     def stop(self):
         """ 停止 FPS 计算线程 """
+        if not self.enabled:
+            return
         with self.lock:
             if not self.running:
                 return  # 已经停止
