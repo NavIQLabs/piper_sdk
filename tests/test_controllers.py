@@ -272,6 +272,61 @@ def test_cartesian_impedance_nullspace_damping_projects_onto_nullspace():
     assert any(abs(a - b) > 1e-6 for a, b in zip(tau_on, tau_off))
 
 
+def test_cartesian_impedance_nullspace_stiffness_pulls_toward_reference():
+    # Nullspace stiffness springs q back toward q_ref through I - J^+ J. With
+    # target == current pose and D=0, the only torque comes from the spring.
+    q = [0.2, 1.0, -0.3, 0.1, 0.2, 0.0]
+    q_ref = [q[0] - 0.1] + q[1:]  # displaced joint 1
+
+    def run(stiffness):
+        intf = MockInterface(q=q, qd=[0.0] * 6)
+        ctrl = CartesianImpedanceController(intf, gravity_comp=False,
+                                            joint_damping=0.0, D=[0.0] * 6,
+                                            nullspace_stiffness=stiffness,
+                                            nullspace_reference=q_ref)
+        x = intf.GetFK("feedback")[5]
+        ctrl.set_target([x[0] / 1000.0, x[1] / 1000.0, x[2] / 1000.0,
+                         math.radians(x[3]), math.radians(x[4]), math.radians(x[5])])
+        _run_ticks(ctrl, n=1)
+        return [c[5] for c in intf._mit_cmds]
+
+    tau_off = run(0.0)
+    tau_on = run(1.0)
+    # spring pushes joint 1 back up toward q_ref (positive error -> +torque)
+    assert any(abs(a - b) > 1e-6 for a, b in zip(tau_on, tau_off))
+
+
+def test_cartesian_impedance_nullspace_stiffness_defaults_to_starting_pose():
+    # Without an explicit q_ref, the spring reference is captured from the
+    # first measured pose, so a nullspace stiffness alone produces ~zero torque.
+    q = [0.2, 1.0, -0.3, 0.1, 0.2, 0.0]
+
+    def run(stiffness):
+        intf = MockInterface(q=q, qd=[0.0] * 6)
+        ctrl = CartesianImpedanceController(intf, gravity_comp=False,
+                                            joint_damping=0.0, D=[0.0] * 6,
+                                            nullspace_stiffness=stiffness)
+        x = intf.GetFK("feedback")[5]
+        ctrl.set_target([x[0] / 1000.0, x[1] / 1000.0, x[2] / 1000.0,
+                         math.radians(x[3]), math.radians(x[4]), math.radians(x[5])])
+        _run_ticks(ctrl, n=1)
+        return [c[5] for c in intf._mit_cmds]
+
+    tau_off = run(0.0)
+    tau_on = run(5.0)
+    # q_ref captured == q, so both are ~zero; must differ only in float noise
+    assert all(abs(a - b) < 1e-9 for a, b in zip(tau_on, tau_off))
+
+
+def test_cartesian_impedance_nullspace_reference_validates_length():
+    intf = MockInterface()
+    with pytest.raises(ValueError):
+        CartesianImpedanceController(intf, nullspace_reference=[0.0] * 3)
+    ctrl = CartesianImpedanceController(intf)
+    with pytest.raises(ValueError):
+        ctrl.set_nullspace_reference([0.0] * 5)
+
+
 def test_torque_rate_limit_slows_commands():
     # With torque_rate_limit=0.5 the torque can change at most 0.5 N·m/cycle.
     intf = MockInterface()
