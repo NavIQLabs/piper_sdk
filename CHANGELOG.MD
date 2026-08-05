@@ -3,6 +3,34 @@
 [Click to switch ZH](CHANGELOG(ZH).MD)
 =============
 
+Unreleased (fork: crisp-style compliant controller features)
+============================================================
+
+Features
+--------
+
+- ✨ feat(controller): Adds torque-rate saturation in `mathx.saturate_torque_rate`
+  - Scalar or per-joint `delta_tau_max` limit; applied in `BaseController._send_mit`
+    via the `torque_rate_limit` constructor arg (scalar or per-joint sequence,
+    0.0 = disabled). The recorded previous torque is the actually-sent value
+    (post-clamp) and resets on `enable()`.
+- ✨ feat(controller): Adds `SigmoidFrictionModel` to `model.py`
+  - `f(qd) = fp1/(1+exp(-fp2(qd+fp3))) - fp1/(1+exp(-fp2 fp3))`; smooth at rest,
+    saturates at large speeds; `fp3` shifts the transition point
+- ✨ feat(controller): Adds target-pose EMA filter to `CartesianImpedanceController`
+  - `target_filter` arg + `set_target_filter()`; rotational targets wrapped to
+    avoid angle jumps
+- ✨ feat(controller): Adds nullspace damping to `CartesianImpedanceController`
+  - `nullspace_damping` arg + `set_nullspace_damping()`; projects joint damping
+    onto `I - J^+ J`
+- ✨ feat(controller): Rewrites `CartesianAdmittanceController` with decoupled
+  trans/rot admittance
+  - Linear 3-DOF MSD for position + SO(3) quaternion exponential-map rotation
+    integration; world-frame angular velocity is left-multiplied onto the
+    quaternion (`exp(ωdt) ⊗ q`, matching crisp) and its state persists across
+    ticks so rotational damping is active; friction via Coulomb offsets list
+    or `SigmoidFrictionModel`
+
 Version 0.6.2
 =============
 

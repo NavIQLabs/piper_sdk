@@ -3,6 +3,28 @@
 [Click to switch EN](CHANGELOG.MD)
 =============
 
+Unreleased (fork: crisp 风格柔顺控制器特性)
+===========================================
+
+特性
+--------
+
+- ✨ feat(controller): `mathx.saturate_torque_rate` 新增力矩变化率饱和
+  - 支持标量或逐关节 `delta_tau_max` 限制；通过 `torque_rate_limit` 构造参数在
+    `BaseController._send_mit` 中应用（支持标量或逐关节序列，0.0 表示禁用）。
+    记录的上一周期力矩为实际发送值（限幅后），并在 `enable()` 时重置
+- ✨ feat(controller): `model.py` 新增 `SigmoidFrictionModel`
+  - `f(qd) = fp1/(1+exp(-fp2(qd+fp3))) - fp1/(1+exp(-fp2 fp3))`；静止处平滑，
+    高速时饱和；`fp3` 平移过渡点
+- ✨ feat(controller): `CartesianImpedanceController` 新增目标位姿 EMA 滤波器
+  - `target_filter` 参数与 `set_target_filter()`；旋转目标做角度环绕避免跳变
+- ✨ feat(controller): `CartesianImpedanceController` 新增零空间阻尼
+  - `nullspace_damping` 参数与 `set_nullspace_damping()`；将关节阻尼投影到 `I - J^+ J`
+- ✨ feat(controller): 重写 `CartesianAdmittanceController`，平动/转动解耦导纳
+  - 位置采用三自由度线性 MSD，转动采用 SO(3) 四元数指数映射积分；世界系角速度
+    左乘到四元数（`exp(ωdt) ⊗ q`，与 crisp 一致）且跨周期持久化，使转动阻尼生效；
+    摩擦力支持 Coulomb 偏移列表或 `SigmoidFrictionModel`
+
 Version 0.6.2
 =============
 
