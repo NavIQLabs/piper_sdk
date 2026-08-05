@@ -19,7 +19,7 @@ torques.
 '''
 
 import math
-from .mathx import mat_vec, condition_number, clip
+from .mathx import mat_vec, condition_number, clip, mat_mul, identity, mat_pinv_damped, mat_add, vec_scale
 from .base import BaseController
 
 
@@ -32,6 +32,11 @@ def _wrap_angle(a):
     return a
 
 
+def _neg(A):
+    '''Negate a flat matrix.'''
+    return [-x for x in A]
+
+
 class CartesianImpedanceController(BaseController):
     '''
     :param interface: connected ``C_PiperInterface_V2``.
@@ -41,11 +46,17 @@ class CartesianImpedanceController(BaseController):
     :param gravity_comp: enable ``g(q)`` feedforward (default True).
     :param cond_thresh: Jacobian condition number above which the wrench is
         scaled down (default 50.0).
+    :param target_filter: EMA coefficient in [0, 1] applied to the desired
+        pose before the control law (0 disables, 1 = instant). Filters step
+        changes in ``set_target`` (default 0.0).
+    :param nullspace_damping: gain for task-space-nullspace joint damping
+        ``N * D_ns * (0 - qd)`` with ``N = I - J^+ J`` (default 0.0).
     :param kwargs: forwarded to :class:`BaseController`.
     '''
     def __init__(self, interface, K=None, D=None,
                  joint_damping=0.5, gravity_comp=True,
-                 cond_thresh=50.0, **kwargs):
+                 cond_thresh=50.0, target_filter=0.0,
+                 nullspace_damping=0.0, **kwargs):
         kwargs.setdefault('name', 'cartesian_impedance')
         super().__init__(interface, **kwargs)
         self._K = [300.0, 300.0, 300.0, 10.0, 10.0, 10.0] if K is None else list(K)
@@ -53,7 +64,10 @@ class CartesianImpedanceController(BaseController):
         self._joint_damping = joint_damping
         self._gravity_comp = gravity_comp
         self._cond_thresh = cond_thresh
+        self._target_filter = float(target_filter)
+        self._nullspace_damping = float(nullspace_damping)
         self._x_d = None
+        self._x_d_filtered = None
         self._F_ff = [0.0] * 6
 
     @property
@@ -92,6 +106,14 @@ class CartesianImpedanceController(BaseController):
         if F_ff is not None:
             self._F_ff = list(F_ff)
 
+    def set_target_filter(self, alpha):
+        '''Set the EMA coefficient applied to the desired pose (0 disables).'''
+        self._target_filter = float(alpha)
+
+    def set_nullspace_damping(self, gain):
+        '''Set the nullspace joint damping gain.'''
+        self._nullspace_damping = float(gain)
+
     def _step(self, dt):
         q = self._state.q
         qd = self._state.qd
@@ -99,6 +121,20 @@ class CartesianImpedanceController(BaseController):
 
         if self._x_d is None:
             self._x_d = list(x)
+        if self._x_d_filtered is None:
+            self._x_d_filtered = list(x)
+
+        # ---- EMA toward the target pose (avoids step-jitter from set_target)
+        if self._target_filter > 0.0:
+            a = min(1.0, self._target_filter)
+            for i in range(6):
+                err = self._x_d[i] - self._x_d_filtered[i]
+                if i >= 3:
+                    err = _wrap_angle(err)
+                self._x_d_filtered[i] += a * err
+            x_d = self._x_d_filtered
+        else:
+            x_d = self._x_d
 
         J = self._model.jacobian(q)
         xdot = mat_vec(J, qd, 6, 6)
@@ -106,7 +142,7 @@ class CartesianImpedanceController(BaseController):
         # ---- wrench from stiffness/damping + feedforward
         F = [0.0] * 6
         for i in range(6):
-            err = self._x_d[i] - x[i]
+            err = x_d[i] - x[i]
             if i >= 3:
                 err = _wrap_angle(err)
             F[i] = self._K[i] * err - self._D[i] * xdot[i] + self._F_ff[i]
@@ -126,6 +162,13 @@ class CartesianImpedanceController(BaseController):
             tau[i] += g[i]
             if self._joint_damping > 0.0:
                 tau[i] -= self._joint_damping * qd[i]
+
+        # ---- nullspace damping: N * D_ns * (0 - qd), N = I - J^+ J
+        if self._nullspace_damping > 0.0:
+            J_pinv = mat_pinv_damped(J, 6, 6, damp=1e-3)
+            N = mat_add(identity(6), _neg(mat_mul(J_pinv, J, 6, 6, 6)), 6, 6)
+            tau_ns = mat_vec(N, vec_scale(qd, -self._nullspace_damping), 6, 6)
+            tau = [a + b for a, b in zip(tau, tau_ns)]
 
         # ---- joint limit safety
         if not self._model.is_within_limits(q):
