@@ -3,7 +3,7 @@ import math
 import pytest
 
 from piper_sdk.controller import (
-    ArmModel, FourierGravityModel, FirstOrderLPF,
+    ArmModel, FourierGravityModel, FirstOrderLPF, SigmoidFrictionModel,
     DEFAULT_JOINT_LIMITS,
 )
 
@@ -90,3 +90,40 @@ def test_first_order_lpf():
     assert f.update(10.0) == pytest.approx(10.0)
     assert f.update(0.0) == pytest.approx(5.0)
     assert f.update(0.0) == pytest.approx(2.5)
+
+
+def test_sigmoid_friction_zero_at_rest():
+    fm = SigmoidFrictionModel(fp1=[1.0] * 6, fp2=[100.0] * 6, fp3=[0.0] * 6)
+    f = fm.friction([0.0] * 6)
+    assert all(abs(v) < 1e-3 for v in f)
+
+
+def test_sigmoid_friction_saturates_and_antisymmetric():
+    fm = SigmoidFrictionModel(fp1=[1.0] * 6, fp2=[100.0] * 6, fp3=[0.0] * 6)
+    pos = fm.friction([1.0] * 6)
+    neg = fm.friction([-1.0] * 6)
+    # saturates toward fp1/2 = 0.5 for this parameterization
+    assert pos[0] == pytest.approx(0.5, abs=1e-3)
+    assert neg[0] == pytest.approx(-0.5, abs=1e-3)
+
+
+def test_sigmoid_friction_smooth_around_zero():
+    fm = SigmoidFrictionModel(fp1=[1.0] * 6, fp2=[100.0] * 6, fp3=[0.0] * 6)
+    # small positive velocity -> small positive friction, strictly increasing
+    f_small = fm.friction([0.05] * 6)
+    f_zero = fm.friction([0.0] * 6)
+    assert f_small[0] > f_zero[0]
+    assert f_small[0] < 0.5
+
+
+def test_sigmoid_friction_offset_shifts_curve():
+    # fp3 shifts the sigmoid transition point. Rest friction stays zero by
+    # construction, but the model saturates earlier on the negative side.
+    fm = SigmoidFrictionModel(fp1=[1.0] * 6, fp2=[100.0] * 6, fp3=[0.5] * 6)
+    assert abs(fm.friction([0.0] * 6)[0]) < 1e-6  # rest zero by construction
+    # transition midpoint sits at qd = -fp3 with friction = -fp1/2
+    assert fm.friction([-0.5] * 6)[0] == pytest.approx(-0.5, abs=1e-3)
+    # already saturated to 0 at qd = -0.3 where the unshifted model is -0.5
+    assert fm.friction([-0.3] * 6)[0] == pytest.approx(0.0, abs=1e-3)
+    fm0 = SigmoidFrictionModel(fp1=[1.0] * 6, fp2=[100.0] * 6, fp3=[0.0] * 6)
+    assert fm0.friction([-0.3] * 6)[0] == pytest.approx(-0.5, abs=1e-3)

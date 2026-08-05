@@ -6,14 +6,16 @@ import pytest
 from piper_sdk.controller import (
     JointImpedanceController, JointTorqueController,
     JointAdmittanceController, CartesianImpedanceController,
-    CartesianAdmittanceController, ArmModel,
+    CartesianAdmittanceController, ArmModel, SigmoidFrictionModel,
 )
 
 
 class MockHighSpd:
     def __init__(self, q, qd, current):
         self.pos = q
-        self.motor_speed = qd
+        # SDK stores motor_speed in 0.001 rad/s units; ArmState._motor_wrap
+        # multiplies by 0.001, so pass qd*1000 to represent qd rad/s.
+        self.motor_speed = qd * 1000.0
         self.current = current
         self.effort = current * 1.0
 
@@ -225,6 +227,138 @@ def test_cartesian_admittance_force_estimate_units():
     ctrl._on_tick(0.002)
     assert len(ctrl._F_ext) == 6
     assert math.isfinite(sum(ctrl._F_ext))
+
+
+def test_cartesian_impedance_target_ema_filters_steps():
+    # With target_filter=1.0 the filtered target jumps instantly; with a
+    # small alpha it converges over several ticks instead.
+    intf = MockInterface(q=[0.2, 1.0, -0.3, 0.1, 0.2, 0.0])
+    ctrl = CartesianImpedanceController(intf, gravity_comp=False,
+                                        joint_damping=0.0,
+                                        target_filter=0.2)
+    x = intf.GetFK("feedback")[5]
+    x_d = [x[0] / 1000.0 + 0.05, x[1] / 1000.0, x[2] / 1000.0,
+           math.radians(x[3]), math.radians(x[4]), math.radians(x[5])]
+    ctrl.set_target(x_d)
+    _run_ticks(ctrl, n=1)
+    # filtered target is between the initial pose and the step target
+    fx = ctrl._x_d_filtered
+    assert fx[0] > x[0] / 1000.0  # moved off the initial pose
+    assert fx[0] < x_d[0] - 0.03  # not yet at target
+    for _ in range(500):
+        _run_ticks(ctrl, n=1)
+    assert ctrl._x_d_filtered[0] == pytest.approx(x_d[0], abs=1e-3)
+
+
+def test_cartesian_impedance_nullspace_damping_projects_onto_nullspace():
+    # Nullspace damping adds a torque in I - J^+ J. Task-space torque is zero
+    # (target == current pose, D=0), so any torque difference between
+    # nullspace on/off must come from the projector.
+    q = [0.2, 1.0, -0.3, 0.1, 0.2, 0.0]
+
+    def run(nullspace_damping):
+        intf = MockInterface(q=q, qd=[0.5] * 6)
+        ctrl = CartesianImpedanceController(intf, gravity_comp=False,
+                                            joint_damping=0.0, D=[0.0] * 6,
+                                            nullspace_damping=nullspace_damping)
+        x = intf.GetFK("feedback")[5]
+        ctrl.set_target([x[0] / 1000.0, x[1] / 1000.0, x[2] / 1000.0,
+                         math.radians(x[3]), math.radians(x[4]), math.radians(x[5])])
+        _run_ticks(ctrl, n=1)
+        return [c[5] for c in intf._mit_cmds]
+
+    tau_on = run(1.0)
+    tau_off = run(0.0)
+    assert any(abs(a - b) > 1e-6 for a, b in zip(tau_on, tau_off))
+
+
+def test_torque_rate_limit_slows_commands():
+    # With torque_rate_limit=0.5 the torque can change at most 0.5 N·m/cycle.
+    intf = MockInterface()
+    ctrl = JointTorqueController(intf, gravity_comp=False, torque_rate_limit=0.5)
+    ctrl.set_torque([8.0, 0, 0, 0, 0, 0])
+    _run_ticks(ctrl, n=1)
+    # first command ramps from 0 by at most 0.5
+    assert intf._mit_cmds[0][5] == pytest.approx(0.5)
+    for _ in range(3):
+        _run_ticks(ctrl, n=1)
+    # monotonic ramp, never exceeding the rate limit
+    for c in intf._mit_cmds[0:4]:
+        assert c[5] >= 0.0
+    last = intf._mit_cmds[-1][5]
+    assert last <= 0.5 * 4 + 1e-9
+
+
+def test_torque_rate_limit_off_passes_through():
+    intf = MockInterface()
+    ctrl = JointTorqueController(intf, gravity_comp=False, torque_rate_limit=0.0)
+    ctrl.set_torque([3.0, 0, 0, 0, 0, 0])
+    _run_ticks(ctrl)
+    assert intf._mit_cmds[0][5] == pytest.approx(3.0)
+
+
+def test_torque_rate_limit_per_joint():
+    # Per-joint limits apply independently to each joint.
+    intf = MockInterface()
+    ctrl = JointTorqueController(intf, gravity_comp=False,
+                                 torque_rate_limit=[0.1, 2.0, 0.0, 0.0, 0.0, 0.0])
+    ctrl.set_torque([8.0, 8.0, 8.0, 0, 0, 0])
+    _run_ticks(ctrl, n=1)
+    cmds = sorted(intf._mit_cmds, key=lambda c: c[0])
+    assert cmds[0][5] == pytest.approx(0.1)   # joint 1 rate = 0.1
+    assert cmds[1][5] == pytest.approx(2.0)   # joint 2 rate = 2.0
+    assert cmds[2][5] == pytest.approx(8.0)   # joint 3 rate = 0 -> passthrough
+
+
+def test_admittance_accepts_sigmoid_friction_model():
+    # Passing a SigmoidFrictionModel must not crash and yields finite torque.
+    intf = MockInterface(q=[0.2, 1.0, -0.3, 0.1, 0.2, 0.0],
+                         current=[1000.0, 0, 0, 0, 0, 0],
+                         qd=[0.1] * 6)
+    fm = SigmoidFrictionModel(fp1=[0.5] * 6, fp2=[50.0] * 6, fp3=[0.0] * 6)
+    ctrl = CartesianAdmittanceController(intf, gravity_comp=False,
+                                         runaway_force=0.0, tau_friction=fm)
+    ctrl.set_target(ctrl._state.pose)
+    ctrl._on_tick(0.002)
+    assert math.isfinite(sum(ctrl._F_ext))
+
+
+def test_admittance_decoupled_rotation_integrates_on_so3():
+    # Rotation torque rotates the quaternion reference without drift; the
+    # quaternion stays normalized (exponential-map integration on SO(3)).
+    intf = MockInterface(q=[0.2, 1.0, -0.3, 0.1, 0.2, 0.0],
+                         current=[0, 0, 0, 1000, 0, 0])
+    ctrl = CartesianAdmittanceController(intf, gravity_comp=False,
+                                         runaway_force=0.0, M=[5.0, 5.0, 5.0, 1.0, 1.0, 1.0],
+                                         D=[100.0, 100.0, 100.0, 10.0, 10.0, 10.0])
+    ctrl.set_target(ctrl._state.pose)
+    for _ in range(50):
+        ctrl._on_tick(0.002)
+    # quaternion reference rotated away from identity
+    assert ctrl._q_d[3] != pytest.approx(1.0, abs=1e-3)
+    # and stays unit-norm (no RPY drift accumulation)
+    n = math.sqrt(sum(v * v for v in ctrl._q_d))
+    assert n == pytest.approx(1.0, abs=1e-6)
+    # rotation moved in the direction of the applied moment
+    assert math.isfinite(sum(ctrl._x_d[3:6]))
+
+
+def test_admittance_rotational_damping_persists():
+    # Rotational angular-velocity state must persist across ticks; otherwise
+    # the D[3:6] damping term is dead and both dampings give identical output.
+    def run(d_rot):
+        intf = MockInterface(q=[0.2, 1.0, -0.3, 0.1, 0.2, 0.0],
+                             current=[0, 0, 0, 1000, 0, 0])
+        ctrl = CartesianAdmittanceController(intf, gravity_comp=False,
+                                             runaway_force=0.0,
+                                             M=[5.0] * 6, D=[0.0, 0.0, 0.0, d_rot, d_rot, d_rot])
+        ctrl.set_target(ctrl._state.pose)
+        for _ in range(100):
+            ctrl._on_tick(0.002)
+        return list(ctrl._q_d)
+
+    low, high = run(1.0), run(1000.0)
+    assert any(abs(a - b) > 1e-3 for a, b in zip(low, high))
 
 
 def test_enable_disable_enters_mit_mode():

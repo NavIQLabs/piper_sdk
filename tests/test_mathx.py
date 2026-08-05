@@ -3,6 +3,7 @@ import pytest
 from piper_sdk.controller import (
     mat_mul, mat_vec, mat_inv, mat_pinv_damped, transpose,
     clip, clip_vec, svd_extreme, condition_number,
+    saturate_torque_rate,
 )
 
 
@@ -80,3 +81,23 @@ def test_svd_extreme_identity():
 def test_condition_number():
     diag_mat = [3.0, 0.0, 0.0, 1.0]
     assert condition_number(diag_mat, 2, 2) == pytest.approx(3.0, rel=1e-3)
+
+
+def test_saturate_torque_rate_limits_change_per_cycle():
+    out = saturate_torque_rate([1.0] * 6, [0.0] * 6, 0.5)
+    assert out == pytest.approx([0.5] * 6)
+    # steady state passes through unchanged
+    out = saturate_torque_rate([2.0] * 6, [2.0] * 6, 0.5)
+    assert out == pytest.approx([2.0] * 6)
+
+
+def test_saturate_torque_rate_per_joint_limits():
+    out = saturate_torque_rate([1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+                               [0.0] * 6,
+                               [0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
+    assert out == pytest.approx([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
+
+
+def test_saturate_torque_rate_symmetric_and_negative():
+    out = saturate_torque_rate([-1.0] * 6, [0.0] * 6, 0.5)
+    assert out == pytest.approx([-0.5] * 6)
