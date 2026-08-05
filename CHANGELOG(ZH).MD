@@ -21,6 +21,11 @@ Unreleased (fork: crisp 风格柔顺控制器特性)
     SO(3) 上做四元数 slerp（`quat_slerp`），避免万向节锁与角度环绕造成的失真
 - ✨ feat(controller): `CartesianImpedanceController` 新增零空间阻尼
   - `nullspace_damping` 参数与 `set_nullspace_damping()`；将关节阻尼投影到 `I - J^+ J`
+- ✨ feat(controller): `CartesianImpedanceController` 新增零空间刚度弹簧
+  - `nullspace_stiffness` / `nullspace_reference` / `nullspace_max_tau` 参数与
+    `set_nullspace_stiffness()` / `set_nullspace_reference()`；通过 `I - J^+ J`
+    将冗余自由度拉回 `q_ref`（默认取初始位形），使机械臂在执行笛卡尔任务时保持
+    位形；`nullspace_max_tau` 限制投影后的力矩，避免干扰主任务（0.0 不限幅）
 - ✨ feat(controller): `CartesianImpedanceController` 新增任务空间误差限幅
   - `error_clip` 参数与 `set_error_clip()`；将进入刚度律的各轴误差限制在
     `±error_clip[i]`，抑制大幅 `set_target` 造成的力矩尖峰（None 表示禁用）

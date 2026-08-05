@@ -24,6 +24,13 @@ Features
 - ✨ feat(controller): Adds nullspace damping to `CartesianImpedanceController`
   - `nullspace_damping` arg + `set_nullspace_damping()`; projects joint damping
     onto `I - J^+ J`
+- ✨ feat(controller): Adds nullspace stiffness spring to `CartesianImpedanceController`
+  - `nullspace_stiffness` / `nullspace_reference` / `nullspace_max_tau` args +
+    `set_nullspace_stiffness()` / `set_nullspace_reference()`; springs the
+    redundant DOFs back toward `q_ref` (defaults to the starting pose) through
+    `I - J^+ J`, so the arm holds its configuration during cartesian tasks;
+    `nullspace_max_tau` clamps the projected torque so it never fights the main
+    task (0.0 = no clamp)
 - ✨ feat(controller): Adds task-space error clipping to `CartesianImpedanceController`
   - `error_clip` arg + `set_error_clip()`; bounds each axis of the error fed to
     the stiffness law to `±error_clip[i]`, capping torque spikes from large

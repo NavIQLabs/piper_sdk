@@ -65,21 +65,27 @@ joint-speed-scale dependent. Tune at realistic speeds, not extremes.
 
 | Param | Default | Where | Status |
 |---|---|---|---|
-| `K` trans (N/m) | `[300, 300, 300]` | `cartesian_impedance.py:62` | TUNE |
+| `K` trans (N/m) | `[300, 300, 300]` | `cartesian_impedance.py:79` | TUNE |
 | `K` rot (N·m/rad) | `[10, 10, 10]` | same | TUNE |
-| `D` trans (N·s/m) | `[30, 30, 30]` | `:63` | TUNE |
+| `D` trans (N·s/m) | `[30, 30, 30]` | `:80` | TUNE |
 | `D` rot (N·m·s/rad) | `[3, 3, 3]` | same | TUNE |
-| `joint_damping` (N·m·s/rad) | `0.5` | `:69` | TUNE |
-| `cond_thresh` | `50.0` | `:71` | VERIFY |
-| `target_filter` (EMA α) | `0.0` (off) | `:72` | TUNE |
-| `error_clip` (max err) | `None` (off) | `:76` | TUNE |
-| `nullspace_damping` | `0.0` (off) | `:73` | TUNE |
+| `joint_damping` (N·m·s/rad) | `0.5` | `:81` | TUNE |
+| `cond_thresh` | `50.0` | `:83` | VERIFY |
+| `target_filter` (EMA α) | `0.0` (off) | `:84` | TUNE |
+| `error_clip` (max err) | `None` (off) | `:95` | TUNE |
+| `nullspace_damping` | `0.0` (off) | `:85` | TUNE |
+| `nullspace_stiffness` | `0.0` (off) | `:86` | TUNE |
+| `nullspace_max_tau` (N·m) | `0.0` (off) | `:87` | TUNE |
 
 **Find with**: `demo/V2/tune_impedance.py` (joint) and
 `demo_cartesian_impedance.py`. Start K low, raise until stiff but stable.
 D ~ `2*sqrt(K·J_eff)` for critical damping. `target_filter` ≈ 0.2–0.5 smooths
 `set_target` steps (rotation is slerped on SO(3), so no wrap artifacts).
 crisp defaults: K 500/30, D auto `2*sqrt(K)`.
+Nullspace: `nullspace_stiffness` springs q back toward `q_ref` (defaults to the
+starting pose) through `I - J^+ J`; pair with `nullspace_damping` ~ `2*sqrt(K_ns)`
+and clamp with `nullspace_max_tau` so it never fights the main task
+(crisp default max_tau 5.0).
 
 ---
 
