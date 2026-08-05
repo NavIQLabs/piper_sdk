@@ -69,14 +69,17 @@ joint-speed-scale dependent. Tune at realistic speeds, not extremes.
 | `K` rot (N·m/rad) | `[10, 10, 10]` | same | TUNE |
 | `D` trans (N·s/m) | `[30, 30, 30]` | `:63` | TUNE |
 | `D` rot (N·m·s/rad) | `[3, 3, 3]` | same | TUNE |
-| `joint_damping` (N·m·s/rad) | `0.5` | `:58` | TUNE |
-| `cond_thresh` | `50.0` | `:59` | VERIFY |
-| `target_filter` (EMA α) | `0.0` (off) | `:67` | TUNE |
+| `joint_damping` (N·m·s/rad) | `0.5` | `:69` | TUNE |
+| `cond_thresh` | `50.0` | `:71` | VERIFY |
+| `target_filter` (EMA α) | `0.0` (off) | `:72` | TUNE |
+| `error_clip` (max err) | `None` (off) | `:76` | TUNE |
+| `nullspace_damping` | `0.0` (off) | `:73` | TUNE |
 
 **Find with**: `demo/V2/tune_impedance.py` (joint) and
 `demo_cartesian_impedance.py`. Start K low, raise until stiff but stable.
 D ~ `2*sqrt(K·J_eff)` for critical damping. `target_filter` ≈ 0.2–0.5 smooths
-`set_target` steps. crisp defaults: K 500/30, D auto `2*sqrt(K)`.
+`set_target` steps (rotation is slerped on SO(3), so no wrap artifacts).
+crisp defaults: K 500/30, D auto `2*sqrt(K)`.
 
 ---
 
@@ -119,7 +122,11 @@ D 50/5.
 | Param | Default | Where | Status |
 |---|---|---|---|
 | `tau_limit` (N·m) | `8.0` | `base.py:56` | VERIFY |
-| `torque_rate_limit` (N·m/tick) | `0.0` (off) | `base.py:60` | TUNE |
+| `torque_rate_limit` (N·m/tick) | `0.0` (off) | `base.py:82` | TUNE |
+| `output_torque_filter` (EMA α) | `0.0` (off) | `base.py:83` | TUNE |
+| `limit_repulsion_torque` (N·m) | `0.0` (off) | `base.py:84` | TUNE |
+| `limit_repulsion_range` (rad) | `0.1` | `base.py:85` | TUNE |
+| `error_clip` (6-vec, units) | `None` (off) | `cartesian_impedance.py:76` | TUNE |
 | `DEFAULT_VELOCITY_LIMITS` (rad/s) | `[2, 2, 2, 2.5, 2.5, 3]` | `model.py:35` | VERIFY |
 
 **Find with**:
@@ -127,6 +134,15 @@ D 50/5.
   the MIT protocol's own clamp.
 - `torque_rate_limit`: measure the largest step torque the arm handles
   without overshoot/ringing; crisp uses 0.5 N·m/cycle. Start ~0.2–0.5.
+- `output_torque_filter`: smooths residual torque chatter after rate limiting;
+  crisp default 0.5. Too high (close to 1) removes the smoothing; too low
+  delays response.
+- `limit_repulsion_torque`/`range`: ramp torque near limits so the arm keeps
+  being controllable instead of tripping. crisp uses range 0.1 rad / max 5 N·m;
+  verify against `tau_limit` (repulsion must stay below it).
+- `error_clip`: cap task-space error entering the stiffness law to bound
+  torque spikes on `set_target` steps. crisp default 0.1 (lin) / 0.5 (rot);
+  start symmetric per-axis.
 - velocity limits: query actual max via
   `demo/V2/V2_piper_ctrl_motor_max_spd.py`; the constants may be optimistic.
 

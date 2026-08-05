@@ -17,9 +17,20 @@ Unreleased (fork: crisp 风格柔顺控制器特性)
   - `f(qd) = fp1/(1+exp(-fp2(qd+fp3))) - fp1/(1+exp(-fp2 fp3))`；静止处平滑，
     高速时饱和；`fp3` 平移过渡点
 - ✨ feat(controller): `CartesianImpedanceController` 新增目标位姿 EMA 滤波器
-  - `target_filter` 参数与 `set_target_filter()`；旋转目标做角度环绕避免跳变
+  - `target_filter` 参数与 `set_target_filter()`；平动目标逐轴滤波，转动目标在
+    SO(3) 上做四元数 slerp（`quat_slerp`），避免万向节锁与角度环绕造成的失真
 - ✨ feat(controller): `CartesianImpedanceController` 新增零空间阻尼
   - `nullspace_damping` 参数与 `set_nullspace_damping()`；将关节阻尼投影到 `I - J^+ J`
+- ✨ feat(controller): `CartesianImpedanceController` 新增任务空间误差限幅
+  - `error_clip` 参数与 `set_error_clip()`；将进入刚度律的各轴误差限制在
+    `±error_clip[i]`，抑制大幅 `set_target` 造成的力矩尖峰（None 表示禁用）
+- ✨ feat(controller): `BaseController` 新增输出力矩 EMA
+  - `output_torque_filter` 参数；在力矩变化率限幅后对指令力矩做指数平滑
+    （0.0 禁用，1.0 直通）
+- ✨ feat(controller): `BaseController` 新增关节限位斥力力矩
+  - `limit_repulsion_torque` / `limit_repulsion_range` 参数与
+    `ArmModel.joint_limit_torque`；在 `safe_range` 内线性增大到 `max_torque`，
+    将关节轻柔推离限位，使机械臂在接近限位时仍可控（0.0 禁用）
 - ✨ feat(controller): 重写 `CartesianAdmittanceController`，平动/转动解耦导纳
   - 位置采用三自由度线性 MSD，转动采用 SO(3) 四元数指数映射积分；世界系角速度
     左乘到四元数（`exp(ωdt) ⊗ q`，与 crisp 一致）且跨周期持久化，使转动阻尼生效；

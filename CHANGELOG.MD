@@ -18,11 +18,24 @@ Features
   - `f(qd) = fp1/(1+exp(-fp2(qd+fp3))) - fp1/(1+exp(-fp2 fp3))`; smooth at rest,
     saturates at large speeds; `fp3` shifts the transition point
 - ✨ feat(controller): Adds target-pose EMA filter to `CartesianImpedanceController`
-  - `target_filter` arg + `set_target_filter()`; rotational targets wrapped to
-    avoid angle jumps
+  - `target_filter` arg + `set_target_filter()`; translational target is filtered
+    per-axis, rotational target is slerped on SO(3) (`quat_slerp`) so the filter
+    never distorts through gimbal-lock or wrap discontinuities
 - ✨ feat(controller): Adds nullspace damping to `CartesianImpedanceController`
   - `nullspace_damping` arg + `set_nullspace_damping()`; projects joint damping
     onto `I - J^+ J`
+- ✨ feat(controller): Adds task-space error clipping to `CartesianImpedanceController`
+  - `error_clip` arg + `set_error_clip()`; bounds each axis of the error fed to
+    the stiffness law to `±error_clip[i]`, capping torque spikes from large
+    `set_target` steps (None = disabled)
+- ✨ feat(controller): Adds output-torque EMA to `BaseController`
+  - `output_torque_filter` arg; exponential smoothing of the commanded torque
+    applied after torque-rate limiting (0.0 = disabled, 1.0 = passthrough)
+- ✨ feat(controller): Adds joint-limit repulsion torque to `BaseController`
+  - `limit_repulsion_torque` / `limit_repulsion_range` args + `ArmModel.joint_limit_torque`;
+    pushes each joint softly away from its limits (linear ramp up to
+    `max_torque` within `safe_range`) so the arm stays controllable near the
+    edge (0.0 = disabled)
 - ✨ feat(controller): Rewrites `CartesianAdmittanceController` with decoupled
   trans/rot admittance
   - Linear 3-DOF MSD for position + SO(3) quaternion exponential-map rotation
