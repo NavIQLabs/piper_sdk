@@ -110,6 +110,40 @@ class FourierGravityModel:
             g[i] = total
         return g
 
+class SigmoidFrictionModel:
+    '''
+    Smooth friction model (adapted from the CRISP controllers).
+
+    Per joint::
+
+        f(qd) = fp1 / (1 + exp(-fp2 * (qd + fp3)))
+              - fp1 / (1 + exp(-fp2 * fp3))
+
+    ``fp1`` is the asymptotic friction magnitude [N·m], ``fp2`` the slope near
+    zero velocity, ``fp3`` an offset. Unlike a hard ``sign(qd)`` model this is
+    smooth at ``qd = 0`` and saturates for large speeds, which gives a
+    stabler external-torque estimate in admittance control.
+    '''
+    def __init__(self, fp1=None, fp2=None, fp3=None):
+        '''
+        :param fp1: 6 friction magnitudes [N·m] (default 0.1 each).
+        :param fp2: 6 slopes [s/rad] (default 100.0 each).
+        :param fp3: 6 offsets [rad/s] (default 0.0 each).
+        '''
+        self.fp1 = [0.1] * 6 if fp1 is None else list(fp1)
+        self.fp2 = [100.0] * 6 if fp2 is None else list(fp2)
+        self.fp3 = [0.0] * 6 if fp3 is None else list(fp3)
+
+    def friction(self, qd):
+        '''Smooth friction torque vector (length 6, N·m) at joint speeds qd.'''
+        out = []
+        for i in range(6):
+            f = self.fp1[i] / (1.0 + math.exp(-self.fp2[i] * (qd[i] + self.fp3[i])))
+            f -= self.fp1[i] / (1.0 + math.exp(-self.fp2[i] * self.fp3[i]))
+            out.append(f)
+        return out
+
+
 class ArmModel:
     '''
     Bundles FK-based numeric Jacobian, pseudo-inverse and safety tables.
