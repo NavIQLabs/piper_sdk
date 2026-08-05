@@ -103,6 +103,44 @@ def vec_norm(a):
     '''Euclidean norm of a vector.'''
     return math.sqrt(vec_dot(a, a))
 
+
+def quat_slerp(q0, q1, t):
+    '''
+    Spherical linear interpolation between two unit quaternions ``[x, y, z, w]``.
+
+    Follows the shortest arc (flips the sign of ``q1`` when the dot product is
+    negative) and avoids the division-by-zero degenerate case by falling back
+    to linear interpolation. This matches the crisp ``slerp`` used for the
+    target orientation filter in SO(3), avoiding the gimbal-lock artifacts of
+    per-axis Euler-angle EMA.
+
+    :param q0: start quaternion ``[x, y, z, w]`` (unit norm).
+    :param q1: end quaternion ``[x, y, z, w]`` (unit norm).
+    :param t: interpolation factor in [0, 1].
+    :return: interpolated unit quaternion ``[x, y, z, w]``.
+    '''
+    dot = q0[0] * q1[0] + q0[1] * q1[1] + q0[2] * q1[2] + q0[3] * q1[3]
+    q1s = q1
+    if dot < 0.0:
+        q1s = [-x for x in q1]
+        dot = -dot
+    if dot > 0.9995:
+        out = [q0[i] + t * (q1s[i] - q0[i]) for i in range(4)]
+    else:
+        theta = math.acos(min(1.0, dot))
+        sin_t = math.sin(theta)
+        if abs(sin_t) < 1e-12:
+            out = [q0[i] + t * (q1s[i] - q0[i]) for i in range(4)]
+        else:
+            wa = math.sin((1.0 - t) * theta) / sin_t
+            wb = math.sin(t * theta) / sin_t
+            out = [wa * q0[i] + wb * q1s[i] for i in range(4)]
+    norm = math.sqrt(sum(x * x for x in out))
+    if norm < 1e-12:
+        return [0.0, 0.0, 0.0, 1.0]
+    return [x / norm for x in out]
+
+
 def mat_inv(A, n):
     '''
     Invert an n x n matrix (flat, row-major) via Gauss-Jordan elimination.

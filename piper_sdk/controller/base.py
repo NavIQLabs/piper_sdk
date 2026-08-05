@@ -53,11 +53,20 @@ class BaseController:
     :param disable_motors_on_stop: call ``DisablePiper()`` on ``disable()``.
     :param torque_rate_limit: max torque change per tick in N·m, scalar for all
         joints or per-joint sequence (default 0.0 = disabled).
+    :param output_torque_filter: EMA coefficient applied to the commanded
+        torque (0 disables, 1 = passthrough). Smooths torque steps, applied
+        after torque-rate limiting (default 0.0).
+    :param limit_repulsion_torque: joint-limit repulsion torque at the limit in
+        N·m (0.0 = disabled). Pushes joints softly away from their limits
+        instead of tripping (default 0.0).
+    :param limit_repulsion_range: distance from a joint limit where repulsion
+        starts, in rad (default 0.1).
     '''
     def __init__(self, interface, rate_hz=500.0, name="base",
                  model=None, tau_limit=8.0, vel_limit=None,
                  enable_on_start=True, disable_motors_on_stop=True,
-                 torque_rate_limit=0.0):
+                 torque_rate_limit=0.0, output_torque_filter=0.0,
+                 limit_repulsion_torque=0.0, limit_repulsion_range=0.1):
         self._intf = interface
         self._rate_hz = rate_hz
         self._name = name
@@ -71,6 +80,9 @@ class BaseController:
         self._safety_ok = True
         self._last_disable = 0.0
         self._torque_rate_limit = torque_rate_limit
+        self._output_torque_filter = float(output_torque_filter)
+        self._limit_repulsion_torque = float(limit_repulsion_torque)
+        self._limit_repulsion_range = float(limit_repulsion_range)
         self._tau_prev = [0.0] * 6
 
         self._loop = RtLoop(rate_hz=rate_hz, callback=self._on_tick, name=name,
@@ -172,9 +184,16 @@ class BaseController:
         idx = motor_num - 1
         if isinstance(rate, (list, tuple)):
             rate = rate[idx] if idx < len(rate) else 0.0
+        if self._limit_repulsion_torque > 0.0:
+            t_ref += self._model.joint_limit_torque(
+                self._state.q, self._limit_repulsion_range,
+                self._limit_repulsion_torque)[idx]
         if rate > 0.0:
             t_ref = self._tau_prev[idx] + clip(
                 t_ref - self._tau_prev[idx], -rate, rate)
+        if self._output_torque_filter > 0.0:
+            a = min(1.0, self._output_torque_filter)
+            t_ref = self._tau_prev[idx] + a * (t_ref - self._tau_prev[idx])
         t_ref = clip(t_ref, -self._tau_limit, self._tau_limit)
         self._tau_prev[idx] = t_ref
         self._intf.JointMitCtrl(motor_num, pos_ref, vel_ref, kp, kd, t_ref)

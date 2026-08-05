@@ -43,6 +43,7 @@ from .mathx import (
     svd_extreme,
     condition_number,
     saturate_torque_rate,
+    quat_slerp,
 )
 from .model import (
     ArmModel,

@@ -19,8 +19,9 @@ torques.
 '''
 
 import math
-from .mathx import mat_vec, condition_number, clip, mat_mul, identity, mat_pinv_damped, mat_add, vec_scale
+from .mathx import mat_vec, condition_number, clip, mat_mul, identity, mat_pinv_damped, mat_add, vec_scale, quat_slerp
 from .base import BaseController
+from ..utils.tf import euler_convert_quat, quat_convert_euler
 
 
 def _wrap_angle(a):
@@ -51,12 +52,16 @@ class CartesianImpedanceController(BaseController):
         changes in ``set_target`` (default 0.0).
     :param nullspace_damping: gain for task-space-nullspace joint damping
         ``N * D_ns * (0 - qd)`` with ``N = I - J^+ J`` (default 0.0).
+    :param error_clip: optional 6-element max absolute task-space error per axis
+        ``[x, y, z, rx, ry, rz]``. When set, the error fed to the stiffness law
+        is clipped to ``±error_clip[i]``, bounding torque spikes from large
+        ``set_target`` steps (default None = disabled).
     :param kwargs: forwarded to :class:`BaseController`.
     '''
     def __init__(self, interface, K=None, D=None,
                  joint_damping=0.5, gravity_comp=True,
                  cond_thresh=50.0, target_filter=0.0,
-                 nullspace_damping=0.0, **kwargs):
+                 nullspace_damping=0.0, error_clip=None, **kwargs):
         kwargs.setdefault('name', 'cartesian_impedance')
         super().__init__(interface, **kwargs)
         self._K = [300.0, 300.0, 300.0, 10.0, 10.0, 10.0] if K is None else list(K)
@@ -66,8 +71,13 @@ class CartesianImpedanceController(BaseController):
         self._cond_thresh = cond_thresh
         self._target_filter = float(target_filter)
         self._nullspace_damping = float(nullspace_damping)
+        if error_clip is not None and len(error_clip) != 6:
+            raise ValueError("error_clip must have length 6")
+        self._error_clip = None if error_clip is None else list(error_clip)
         self._x_d = None
         self._x_d_filtered = None
+        self._q_target = None
+        self._q_d_filtered = None
         self._F_ff = [0.0] * 6
 
     @property
@@ -103,6 +113,7 @@ class CartesianImpedanceController(BaseController):
         if len(x_d) != 6:
             raise ValueError("x_d must have length 6")
         self._x_d = list(x_d)
+        self._q_target = list(euler_convert_quat(*x_d[3:6]))
         if F_ff is not None:
             self._F_ff = list(F_ff)
 
@@ -114,6 +125,17 @@ class CartesianImpedanceController(BaseController):
         '''Set the nullspace joint damping gain.'''
         self._nullspace_damping = float(gain)
 
+    def set_error_clip(self, error_clip=None):
+        '''
+        Set per-axis task-space error clipping (or None to disable).
+
+        :param error_clip: 6-element ``[x, y, z, rx, ry, rz]`` max absolute
+            error fed to the stiffness law, or None to disable clipping.
+        '''
+        if error_clip is not None and len(error_clip) != 6:
+            raise ValueError("error_clip must have length 6")
+        self._error_clip = None if error_clip is None else list(error_clip)
+
     def _step(self, dt):
         q = self._state.q
         qd = self._state.qd
@@ -121,17 +143,22 @@ class CartesianImpedanceController(BaseController):
 
         if self._x_d is None:
             self._x_d = list(x)
+        if self._q_target is None:
+            self._q_target = list(euler_convert_quat(*x[3:6]))
         if self._x_d_filtered is None:
             self._x_d_filtered = list(x)
+        if self._q_d_filtered is None:
+            self._q_d_filtered = list(euler_convert_quat(*x[3:6]))
 
         # ---- EMA toward the target pose (avoids step-jitter from set_target)
+        # Translation is filtered per axis; orientation is slerped in SO(3) so
+        # the filter never distorts through gimbal-lock / wrap discontinuities.
         if self._target_filter > 0.0:
             a = min(1.0, self._target_filter)
-            for i in range(6):
-                err = self._x_d[i] - self._x_d_filtered[i]
-                if i >= 3:
-                    err = _wrap_angle(err)
-                self._x_d_filtered[i] += a * err
+            for i in range(3):
+                self._x_d_filtered[i] += a * (self._x_d[i] - self._x_d_filtered[i])
+            self._q_d_filtered = list(quat_slerp(self._q_d_filtered, self._q_target, a))
+            self._x_d_filtered[3:6] = list(quat_convert_euler(*self._q_d_filtered))
             x_d = self._x_d_filtered
         else:
             x_d = self._x_d
@@ -145,6 +172,8 @@ class CartesianImpedanceController(BaseController):
             err = x_d[i] - x[i]
             if i >= 3:
                 err = _wrap_angle(err)
+            if self._error_clip is not None:
+                err = clip(err, -self._error_clip[i], self._error_clip[i])
             F[i] = self._K[i] * err - self._D[i] * xdot[i] + self._F_ff[i]
 
         # ---- singularity scaling

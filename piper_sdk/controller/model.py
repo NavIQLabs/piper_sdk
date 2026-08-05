@@ -227,3 +227,33 @@ class ArmModel:
             if not (lo <= q[i] <= hi):
                 return False
         return True
+
+    def joint_limit_torque(self, q, safe_range=0.1, max_torque=5.0):
+        '''
+        Soft repulsion torque that pushes each joint away from its limits.
+
+        Rises linearly from 0 at ``safe_range`` away from a limit to
+        ``max_torque`` at the limit itself (sign pushes inward, i.e. positive
+        near the lower limit, negative near the upper). This is the crisp
+        ``get_joint_limit_torque`` behavior: it softens the approach to a limit
+        so the arm stays controllable near the edge, while the hard trip in
+        :meth:`BaseController._check_limits` remains as a last resort.
+
+        :param q: joint positions (length 6, rad).
+        :param safe_range: distance from a limit where repulsion starts [rad].
+        :param max_torque: repulsion torque at the limit [N·m].
+        :return: list of 6 torques [N·m].
+        '''
+        out = []
+        for i in range(6):
+            lo, hi = self.joint_limits[i]
+            dist_lower = q[i] - lo
+            dist_upper = hi - q[i]
+            lower_ratio = 0.0
+            if dist_lower < safe_range:
+                lower_ratio = min(1.0, max(0.0, (safe_range - dist_lower) / safe_range))
+            upper_ratio = 0.0
+            if dist_upper < safe_range:
+                upper_ratio = min(1.0, max(0.0, (safe_range - dist_upper) / safe_range))
+            out.append(max_torque * lower_ratio - max_torque * upper_ratio)
+        return out
