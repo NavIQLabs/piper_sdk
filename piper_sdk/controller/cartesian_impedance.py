@@ -19,7 +19,7 @@ torques.
 '''
 
 import math
-from .mathx import mat_vec, condition_number, clip, mat_mul, identity, mat_pinv_damped, mat_add, vec_scale, quat_slerp
+from .mathx import mat_vec, condition_number, clip, mat_mul, identity, mat_pinv_damped, mat_add, quat_slerp, clip_vec
 from .base import BaseController
 from ..utils.tf import euler_convert_quat, quat_convert_euler
 
@@ -52,6 +52,16 @@ class CartesianImpedanceController(BaseController):
         changes in ``set_target`` (default 0.0).
     :param nullspace_damping: gain for task-space-nullspace joint damping
         ``N * D_ns * (0 - qd)`` with ``N = I - J^+ J`` (default 0.0).
+    :param nullspace_stiffness: gain for the nullspace spring pulling the arm
+        back toward ``q_ref``, ``N * K_ns * (q_ref - q)`` (default 0.0). When
+        ``q_ref`` is not set it defaults to the joint pose at the first step,
+        so the nullspace holds the arm's starting configuration.
+    :param nullspace_reference: optional 6-vector joint reference ``q_ref`` for
+        the nullspace spring (rad). If None, captured from the first measured
+        pose (default None).
+    :param nullspace_max_tau: clamp on the nullspace torque magnitude in N·m,
+        applied after projection so the nullspace never fights the main task
+        (0.0 = no clamp, default 0.0).
     :param error_clip: optional 6-element max absolute task-space error per axis
         ``[x, y, z, rx, ry, rz]``. When set, the error fed to the stiffness law
         is clipped to ``±error_clip[i]``, bounding torque spikes from large
@@ -61,7 +71,9 @@ class CartesianImpedanceController(BaseController):
     def __init__(self, interface, K=None, D=None,
                  joint_damping=0.5, gravity_comp=True,
                  cond_thresh=50.0, target_filter=0.0,
-                 nullspace_damping=0.0, error_clip=None, **kwargs):
+                 nullspace_damping=0.0, nullspace_stiffness=0.0,
+                 nullspace_reference=None, nullspace_max_tau=0.0,
+                 error_clip=None, **kwargs):
         kwargs.setdefault('name', 'cartesian_impedance')
         super().__init__(interface, **kwargs)
         self._K = [300.0, 300.0, 300.0, 10.0, 10.0, 10.0] if K is None else list(K)
@@ -71,6 +83,13 @@ class CartesianImpedanceController(BaseController):
         self._cond_thresh = cond_thresh
         self._target_filter = float(target_filter)
         self._nullspace_damping = float(nullspace_damping)
+        self._nullspace_stiffness = float(nullspace_stiffness)
+        self._nullspace_max_tau = float(nullspace_max_tau)
+        self._q_ref = None
+        if nullspace_reference is not None:
+            if len(nullspace_reference) != 6:
+                raise ValueError("nullspace_reference must have length 6")
+            self._q_ref = list(nullspace_reference)
         if error_clip is not None and len(error_clip) != 6:
             raise ValueError("error_clip must have length 6")
         self._error_clip = None if error_clip is None else list(error_clip)
@@ -124,6 +143,16 @@ class CartesianImpedanceController(BaseController):
     def set_nullspace_damping(self, gain):
         '''Set the nullspace joint damping gain.'''
         self._nullspace_damping = float(gain)
+
+    def set_nullspace_stiffness(self, gain):
+        '''Set the nullspace spring gain pulling toward ``q_ref``.'''
+        self._nullspace_stiffness = float(gain)
+
+    def set_nullspace_reference(self, q_ref):
+        '''Set the nullspace spring reference (length 6, rad).'''
+        if len(q_ref) != 6:
+            raise ValueError("q_ref must have length 6")
+        self._q_ref = list(q_ref)
 
     def set_error_clip(self, error_clip=None):
         '''
@@ -192,11 +221,18 @@ class CartesianImpedanceController(BaseController):
             if self._joint_damping > 0.0:
                 tau[i] -= self._joint_damping * qd[i]
 
-        # ---- nullspace damping: N * D_ns * (0 - qd), N = I - J^+ J
-        if self._nullspace_damping > 0.0:
+        # ---- nullspace: N * (K_ns*(q_ref - q) + D_ns*(0 - qd)), N = I - J^+ J
+        if self._nullspace_damping > 0.0 or self._nullspace_stiffness > 0.0:
+            if self._q_ref is None:
+                self._q_ref = list(q)
             J_pinv = mat_pinv_damped(J, 6, 6, damp=1e-3)
             N = mat_add(identity(6), _neg(mat_mul(J_pinv, J, 6, 6, 6)), 6, 6)
-            tau_ns = mat_vec(N, vec_scale(qd, -self._nullspace_damping), 6, 6)
+            secondary = [self._nullspace_stiffness * (self._q_ref[i] - q[i])
+                         - self._nullspace_damping * qd[i] for i in range(6)]
+            tau_ns = mat_vec(N, secondary, 6, 6)
+            if self._nullspace_max_tau > 0.0:
+                tau_ns = clip_vec(tau_ns, -self._nullspace_max_tau,
+                                  self._nullspace_max_tau)
             tau = [a + b for a, b in zip(tau, tau_ns)]
 
         # ---- joint limit safety
